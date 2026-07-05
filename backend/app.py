@@ -2092,9 +2092,10 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
               AND COALESCE(d.bonus,0) BETWEEN 1 AND 45
               -- RC4-3 METHOD/FIX: 실제 공식 당첨일(YYYY-MM-DD / YYYY.MM.DD)만 인정
               -- 2026-07-06 01:14:51 처럼 생성시간이 draw_date로 들어간 임시 회차는 제외
-              AND TRIM(COALESCE(d.draw_date,'')) GLOB '????[-.]??[-.]??'
               AND length(TRIM(COALESCE(d.draw_date,''))) = 10
-              AND date(REPLACE(d.draw_date,'.','-')) <= date('now','localtime')
+              AND substr(TRIM(COALESCE(d.draw_date,'')),5,1) IN ('-', '.')
+              AND substr(TRIM(COALESCE(d.draw_date,'')),8,1) IN ('-', '.')
+              AND date(REPLACE(TRIM(COALESCE(d.draw_date,'')),'.','-')) <= CURRENT_DATE
             ORDER BY wc.round_no DESC, wc.id DESC
             LIMIT 200
         ''',(member_id,)).fetchall()
