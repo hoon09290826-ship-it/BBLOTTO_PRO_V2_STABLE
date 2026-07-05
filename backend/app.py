@@ -2233,26 +2233,35 @@ def rc312_link_orphan_recommendations(req: dict, request:Request, authorization:
 def generate(req:GenerateReq, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     member_name=''
+    member_grade='일반'
     member_id=req.member_id
     with con() as c:
         member_id, member_name = rc312_resolve_member(c, member_id, '')
+        try:
+            if member_id:
+                _mg = c.execute('SELECT grade FROM members WHERE id=?', (member_id,)).fetchone()
+                member_grade = rc45_grade_label(_mg['grade'] if _mg else '일반')
+        except Exception:
+            member_grade = '일반'
     # RC3-12: 회원을 선택하지 않은 추천은 기존 호환을 위해 허용하지만,
     # 프론트에서는 회원 선택을 안내하여 이후 당첨확인에서 '회원 선택 없음'이 나오지 않도록 합니다.
     excluded_value = req.excluded or req.exclude or ''
     safe_count=max(1, min(50, int(req.count or 10)))
     safe_round=max(1, int(req.round_no or 1))
     safe_mode=req.mode or 'balanced'
-    combos, details, st = make_premium_combos(safe_count, req.fixed, excluded_value, safe_mode)
+    combos, details, st = make_premium_combos(safe_count, req.fixed, excluded_value, safe_mode, member_grade)
     details = rc37_enrich_details(combos, details)
     combos, details = rc38_portfolio_reorder(combos, details)
     details = rc37_enrich_details(combos, details)
     analysis=clean_template_text(build_analysis_text(safe_round, st, safe_mode, req.fixed, excluded_value, details))
     sms=clean_template_text(build_sms(member_name, safe_round, combos, analysis, details))
     engine=_engine_summary(details, st)
-    engine['phase']='RC3-12'
+    engine['phase']='RC4-5'
+    engine['member_grade']=member_grade
+    engine['grade_strength']=rc45_grade_strength_text(member_grade)
     engine['rc38_report']=rc38_generation_report(combos, details, safe_round, safe_mode)
     engine['top3']=rc37_top3(combos, details)
-    engine['quality_guide']='VIP 94점 이상 / PREMIUM 89점 이상 / STANDARD 기본 추천 · RC3-8 중복/분산 보정 적용'
+    engine['quality_guide']=f'{member_grade} 추천 강도 · {rc45_grade_strength_text(member_grade)} · RC4-5 심층분석 엔진 적용'
     with con() as c:
         # Render에 남아 있는 오래된 DB도 요청 시점에 한 번 더 보정합니다.
         rec_cols=table_cols(c, 'recommendations')
@@ -2260,7 +2269,7 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
             'member_id':'INTEGER','member_name':'TEXT DEFAULT ""','round_no':'INTEGER DEFAULT 0',
             'mode':'TEXT DEFAULT "balanced"','count':'INTEGER DEFAULT 0','numbers':'TEXT DEFAULT "[]"','analysis':'TEXT DEFAULT ""','sms':'TEXT DEFAULT ""',
             'created_by':'INTEGER DEFAULT 0','created_at':'TEXT DEFAULT ""',
-            'avg_score':'REAL DEFAULT 0','engine_json':'TEXT DEFAULT "{}"','details_json':'TEXT DEFAULT "[]"'
+            'avg_score':'REAL DEFAULT 0','grade':'TEXT DEFAULT "일반"','engine_json':'TEXT DEFAULT "{}"','details_json':'TEXT DEFAULT "[]"'
         }.items():
             if col not in rec_cols:
                 c.execute(f'ALTER TABLE recommendations ADD COLUMN {col} {ddl}')
@@ -2268,7 +2277,7 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
         data={
             'member_id':member_id,'member_name':member_name,'round_no':safe_round,'mode':safe_mode,'count':len(combos),
             'numbers':json.dumps(combos,ensure_ascii=False),'analysis':analysis,'sms':sms,'created_by':admin['id'],'created_at':now(),
-            'avg_score':engine.get('avg_score',0),'engine_json':json.dumps(engine,ensure_ascii=False),'details_json':json.dumps(details,ensure_ascii=False)
+            'avg_score':engine.get('avg_score',0),'grade':member_grade,'engine_json':json.dumps(engine,ensure_ascii=False),'details_json':json.dumps(details,ensure_ascii=False)
         }
         cols=[k for k in data.keys() if k in rec_cols]
         cur=c.execute('INSERT INTO recommendations('+','.join(cols)+') VALUES('+','.join(['?']*len(cols))+')', [data[k] for k in cols])
@@ -5516,3 +5525,217 @@ def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
         '본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.'
     ]
     return '\n'.join(lines)
+
+
+# ===================== RC4-5 DEEP RECOMMEND ENGINE =====================
+def rc45_grade_label(raw='일반'):
+    v = str(raw or '일반').strip()
+    alias = {
+        'VIP':'1등', '다이아':'1등', '다이아몬드':'1등', '프리미엄':'2등',
+        '1등관리':'1등', '1등 관리':'1등', '2등관리':'2등', '2등 관리':'2등',
+        '일반관리':'일반', '일반 관리':'일반'
+    }
+    return alias.get(v, v if v in ('1등','2등','일반') else '일반')
+
+def rc45_grade_strength_text(grade='일반'):
+    g = rc45_grade_label(grade)
+    if g == '1등':
+        return '고강도 심층분석: 후보군 확대, 페어 반복 억제, 끝수·구간·AC·중복 제한을 가장 엄격하게 적용'
+    if g == '2등':
+        return '중강도 심층분석: 최근 흐름과 미출현 보강을 균형 반영하고 유사 조합을 제한'
+    return '표준 심층분석: 안정형 균형 조합 중심으로 과한 패턴과 중복을 제한'
+
+def _rc45_grade_params(grade='일반'):
+    g = rc45_grade_label(grade)
+    if g == '1등':
+        return {'needed': 820, 'base': 9200, 'tries': 30, 'first': (2,1,3,1), 'second': (3,1,3,2), 'third': (4,2,3,2), 'score_boost': 1.8}
+    if g == '2등':
+        return {'needed': 660, 'base': 7600, 'tries': 26, 'first': (3,1,3,1), 'second': (4,2,3,2), 'third': (5,2,4,3), 'score_boost': 1.0}
+    return {'needed': 520, 'base': 6200, 'tries': 24, 'first': (4,2,4,2), 'second': (5,2,4,3), 'third': (6,3,4,4), 'score_boost': 0.3}
+
+def make_premium_combos(count=10, fixed='', excluded='', mode='balanced', member_grade='일반'):
+    """RC4-5: 회원 등급(1등/2등/일반)별 추천 강도 차등 + 심층분석 후보 선별."""
+    member_grade = rc45_grade_label(member_grade)
+    gp = _rc45_grade_params(member_grade)
+    st = latest_stats(300)
+    fixed_set = set(parse_nums(fixed)); excluded_set = set(parse_nums(excluded))
+    fixed_set = {n for n in fixed_set if n not in excluded_set}
+    if len(fixed_set) > 6:
+        fixed_set = set(sorted(fixed_set)[:6])
+    pool = [n for n in range(1, 46) if n not in excluded_set and n not in fixed_set]
+    target = max(1, min(50, int(count or 10)))
+    if len(pool) + len(fixed_set) < 6:
+        raise HTTPException(400, '고정수/제외수를 확인하세요. 선택 가능한 번호가 부족합니다.')
+    profile, ext = _ai_v1_profile(st, mode)
+    for n in range(1, 46):
+        if n in (ext.get('hot300') or [])[:12]:
+            profile[n] = profile.get(n, 1) + gp['score_boost']
+        if n in (ext.get('overdue300') or [])[:12]:
+            profile[n] = profile.get(n, 1) + gp['score_boost'] * 0.75
+        if member_grade == '1등' and n in (ext.get('mid300') or [])[:16]:
+            profile[n] = profile.get(n, 1) + 0.6
+    past = {tuple(sorted(d['numbers'])) for d in st.get('draws', []) if len(d.get('numbers', [])) == 6}
+    buckets = {
+        'hot': [n for n in ext['hot300'][:22] if n in pool],
+        'cold': [n for n in ext['cold300'][:22] if n in pool],
+        'overdue': [n for n in ext['overdue300'][:22] if n in pool],
+        'mid': [n for n in ext['mid300'][:26] if n in pool],
+        'all': pool[:],
+    }
+    if member_grade == '1등':
+        plans = [['hot','overdue','mid','cold','all','all'], ['hot','mid','overdue','all','cold','all'], ['mid','hot','overdue','cold','all','all']]
+    elif member_grade == '2등':
+        plans = [['hot','cold','overdue','mid','all','all'], ['mid','hot','overdue','all','cold','all'], ['cold','mid','hot','all','overdue','all']]
+    elif mode == 'aggressive':
+        plans = [['hot','hot','mid','overdue','all','cold'], ['hot','mid','all','overdue','all','all'], ['hot','cold','overdue','all','all','mid']]
+    elif mode == 'conservative':
+        plans = [['mid','mid','cold','overdue','all','all'], ['cold','overdue','mid','hot','all','all'], ['mid','cold','all','all','overdue','all']]
+    else:
+        plans = [['hot','cold','overdue','mid','all','all'], ['hot','mid','cold','overdue','all','all'], ['mid','hot','overdue','all','cold','all']]
+    candidates = []
+    seen = set()
+    tries = 0
+    needed = max(gp['base'], target * gp['needed'])
+    max_tries = max(125000, needed * gp['tries'])
+    while len(candidates) < needed and tries < max_tries:
+        tries += 1
+        nums = set(fixed_set)
+        plan = random.choice(plans)[:]
+        random.shuffle(plan)
+        for b in plan:
+            if len(nums) >= 6:
+                break
+            usable = [n for n in buckets.get(b, pool) if n not in nums]
+            if usable:
+                nums.update(_weighted_pick(usable, [profile[n] for n in usable], 1))
+        while len(nums) < 6:
+            usable = [n for n in pool if n not in nums]
+            nums.update(_weighted_pick(usable, [profile[n] for n in usable], 1))
+        arr = tuple(sorted(nums))
+        if arr in seen:
+            continue
+        ok, reason = _rc42_combo_ok(arr, past=past, fixed_set=fixed_set)
+        if not ok:
+            continue
+        seen.add(arr)
+        score = _rc42_adjusted_score(arr, st, mode, ext, profile)
+        spread_bonus = len({n % 10 for n in arr}) * (0.12 if member_grade == '1등' else 0.08)
+        section_bonus = len({0 if n <= 15 else 1 if n <= 30 else 2 for n in arr}) * (0.18 if member_grade == '1등' else 0.10)
+        candidates.append((score + spread_bonus + section_bonus, list(arr)))
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+    selected = []
+    usage = collections.Counter()
+    pair_usage = collections.Counter()
+    pattern_usage = collections.Counter()
+    def can_add(combo, max_number_use, max_pair_use, max_overlap, max_pattern_use):
+        pairs = [tuple(sorted(p)) for p in itertools.combinations(combo, 2)]
+        pattern = _rc42_pattern_key(combo)
+        if any(usage[n] >= max_number_use for n in combo if n not in fixed_set):
+            return False
+        if any(pair_usage[p] >= max_pair_use for p in pairs):
+            return False
+        if pattern_usage[pattern] >= max_pattern_use:
+            return False
+        if not all(len(set(combo) & set(prev)) <= max_overlap for prev in selected):
+            return False
+        return True
+    def add_combo(combo):
+        selected.append(combo)
+        usage.update(combo)
+        pair_usage.update([tuple(sorted(p)) for p in itertools.combinations(combo, 2)])
+        pattern_usage.update([_rc42_pattern_key(combo)])
+    for score, combo in candidates:
+        if can_add(combo, *gp['first']):
+            add_combo(combo)
+        if len(selected) >= target:
+            break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo in selected:
+                continue
+            if can_add(combo, *gp['second']):
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo in selected:
+                continue
+            if can_add(combo, *gp['third']):
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo not in selected:
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    details = [_rc42_detail(c, st, mode, ext, profile) for c in selected[:target]]
+    for d in details:
+        d['member_grade'] = member_grade
+        d['grade_strength'] = rc45_grade_strength_text(member_grade)
+        d['engine_version'] = 'RC4-5_DEEP_GRADE_ENGINE'
+    details.sort(key=lambda x: -float(x.get('score') or 0))
+    selected_sorted = [d['numbers'] for d in details]
+    st.update(ext)
+    st['ai_v1_candidates'] = len(candidates)
+    st['ai_v1_attempts'] = tries
+    st['engine_version'] = 'RC4-5_DEEP_GRADE_ENGINE'
+    st['member_grade'] = member_grade
+    st['grade_strength'] = rc45_grade_strength_text(member_grade)
+    st['rc42_portfolio'] = {
+        'max_overlap': max((len(set(a) & set(b)) for i, a in enumerate(selected_sorted) for b in selected_sorted[i+1:]), default=0),
+        'unique_patterns': len({_rc42_pattern_key(c) for c in selected_sorted}),
+        'number_usage_max': max(usage.values()) if usage else 0,
+    }
+    return selected_sorted[:target], details[:target], st
+
+def _engine_summary(details, st):
+    scores = [float(d.get('score') or d.get('ai_score') or d.get('vip_score') or 0) for d in (details or []) if (d.get('score') or d.get('ai_score') or d.get('vip_score'))]
+    grade = rc45_grade_label(st.get('member_grade') or (details[0].get('member_grade') if details else '일반'))
+    return {
+        'version': 'RC4-5_DEEP_GRADE_ENGINE',
+        'engine_version': 'RC4-5_DEEP_GRADE_ENGINE',
+        'phase': 'RC4-5',
+        'member_grade': grade,
+        'grade_strength': rc45_grade_strength_text(grade),
+        'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
+        'max_score': round(max(scores), 1) if scores else 0,
+        'min_score': round(min(scores), 1) if scores else 0,
+        'candidate_count': int(st.get('ai_v1_candidates') or 0),
+        'selected_count': len(details or []),
+        'latest_round': st.get('latest_round') or 0,
+        'rc45_report': {
+            'pipeline': '최근 10/30/50/100/300회 통계 → 등급별 후보군 가중치 → 심층 품질 필터 → 포트폴리오 중복 제한 → 최종 점수 선별',
+            'grade_policy': '회원 등급은 1등/2등/일반으로 운영하며 등급별 후보 수, 중복 제한, 조합 선별 강도를 다르게 적용합니다.',
+            'filters': '홀짝·합계·저중고 구간·AC값·끝수·간격·연속수·과거 동일 조합·페어 반복 제한',
+            'portfolio': st.get('rc42_portfolio') or {},
+            'summary': 'RC4-5 심층분석 추천엔진 적용 완료'
+        }
+    }
+
+def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
+    details = details or []
+    engine = _engine_summary(details, st)
+    grade = engine.get('member_grade') or rc45_grade_label(st.get('member_grade'))
+    best = sorted(details, key=lambda x: -float(x.get('score') or 0))[:3]
+    top_nums = []
+    for d in best:
+        for n in d.get('numbers', []):
+            if n not in top_nums:
+                top_nums.append(n)
+    avg = engine.get('avg_score', 0)
+    hot = (st.get('hot300') or st.get('hot') or [])[:6]
+    overdue = (st.get('overdue300') or st.get('overdue') or [])[:6]
+    mode_name = {'balanced': '균형형', 'aggressive': '공격형', 'conservative': '보수형'}.get(mode, mode or '균형형')
+    grade_phrase = {'1등':'상위 집중 관리 기준', '2등':'중상위 집중 관리 기준', '일반':'표준 관리 기준'}.get(grade, '표준 관리 기준')
+    lines = [
+        f'{round_no}회차 추천은 RC4-5 심층분석 엔진으로 {grade_phrase}에 맞춰 선별했습니다.',
+        f'최근 10/30/50/100/300회 흐름을 교차 반영하고, HOT 흐름({", ".join(map(str, hot)) if hot else "자동 분석"})과 보강 흐름({", ".join(map(str, overdue)) if overdue else "자동 보강"})을 함께 검토했습니다.',
+        f'우선 후보 번호는 {", ".join(map(str, top_nums[:8])) if top_nums else "생성 결과 기준 자동 산출"}이며, 최종 조합 평균 AI 점수는 {avg}점입니다.',
+        f'{mode_name} 운영 기준으로 끝수 분산, 저/중/고 구간, 홀짝 균형, AC값, 연속수, 조합 간 중복률을 종합 제한했습니다.',
+        '본 자료는 누적 통계와 패턴 분석을 기반으로 한 참고용 추천이며 당첨을 보장하지 않습니다.'
+    ]
+    return '\n'.join(lines)
+# ===================== /RC4-5 DEEP RECOMMEND ENGINE =====================

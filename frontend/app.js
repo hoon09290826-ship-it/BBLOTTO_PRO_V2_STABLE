@@ -150,6 +150,11 @@ function setBusy(btnId, busy, text){
   else{ btn.textContent = btn.dataset.oldText || btn.textContent; btn.disabled = false; }
 }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function memberGradeLabel(v){
+  v=String(v||'일반').trim();
+  const map={'VIP':'1등','다이아':'1등','다이아몬드':'1등','프리미엄':'2등','1등관리':'1등','2등관리':'2등','일반관리':'일반'};
+  return map[v] || (['1등','2등','일반'].includes(v)?v:'일반');
+}
 function numberListText(arr){ return (arr||[]).map(x=>Array.isArray(x)?x.join(', '):String(x)).join('\n'); }
 function ballClass(n){ n=Number(n); if(n<=10)return'b1'; if(n<=20)return'b2'; if(n<=30)return'b3'; if(n<=40)return'b4'; return'b5'; }
 function gradeLabel(d){ const s=Number(d?.score ?? d?.vip_score ?? d?.ai_score ?? 0); return d?.grade || (s>=94?'VIP':(s>=89?'PREMIUM':'STANDARD')); }
@@ -354,7 +359,7 @@ function renderMembers(list){
     return `<div class="member-row member-card ${muted?'muted':''}">
       <div>
         <b>${esc(m.name||'')}</b>
-        <p>${esc(m.phone||'')} · ${esc(m.grade||'일반')} · ${esc(st)} · ${esc(m.priority||'보통')}</p>
+        <p>${esc(m.phone||'')} · ${esc(memberGradeLabel(m.grade))} · ${esc(st)} · ${esc(m.priority||'보통')}</p>
         <small class="member-owner-line">등록 관리자: <strong>${esc(registeredBy)}</strong>${m.created_at ? ' · 등록일 ' + esc(m.created_at) : ''}</small>
         <small>${esc(m.memo||'')}</small>
       </div>
@@ -384,7 +389,7 @@ async function loadMembers(){
   membersCache = await api('/api/members' + (params.toString() ? '?'+params.toString() : ''));
   renderMembers(membersCache); fillMemberSelect(membersCache);
   setText('memberActive', membersCache.filter(m=>(m.status||'활성')==='활성').length);
-  setText('memberVip', membersCache.filter(m=>['VIP','다이아','프리미엄'].includes(m.grade)).length);
+  setText('memberVip', membersCache.filter(m=>['1등','2등','VIP','다이아','프리미엄'].includes(String(m.grade||''))).length);
   setText('memberPriority', membersCache.filter(m=>(m.priority||'').includes('높') || (m.priority||'').includes('최')).length);
 }
 function rc44Money(v){ return Number(v||0).toLocaleString() + '원'; }
@@ -785,7 +790,7 @@ async function loadAdmin(){
 
 window.selectMember=function(id){
   const m=membersCache.find(x=>String(x.id)===String(id)); if(!m) return;
-  setValue('mId',m.id); setValue('mName',m.name); setValue('mPhone',m.phone); setValue('mGrade',m.grade||'일반'); setValue('mStatus',m.status||'활성'); setValue('mPriority',m.priority||'보통'); setValue('mSource',m.source||'직접등록'); setValue('mMemo',m.memo||'');
+  setValue('mId',m.id); setValue('mName',m.name); setValue('mPhone',m.phone); setValue('mGrade',memberGradeLabel(m.grade)); setValue('mStatus',m.status||'활성'); setValue('mPriority',m.priority||'보통'); setValue('mSource',m.source||'직접등록'); setValue('mMemo',m.memo||'');
   if($('genMember')) $('genMember').value=id;
   refreshSmsPreview();
   toast(`${m.name} 회원을 선택했습니다.`);
@@ -798,7 +803,7 @@ window.detailMember=safe(async function(id){
   const body=$('memberDetailPageBody');
   if(!body) return;
   if(title) title.textContent = `${m.name || '회원'} 상세`;
-  if(sub) sub.textContent = `${m.phone || '-'} / ${m.grade || '일반'} / ${m.status || '활성'} / ${m.priority || '보통'}`;
+  if(sub) sub.textContent = `${m.phone || '-'} / ${memberGradeLabel(m.grade)} / ${m.status || '활성'} / ${m.priority || '보통'}`;
   const summary = d.summary || {};
   const ranks = summary.rank_counts || {};
   const rankText = ['1등','2등','3등','4등','5등','낙첨'].filter(k=>ranks[k]).map(k=>`${k} ${ranks[k]}건`).join(' · ') || '확인 이력 없음';
@@ -807,7 +812,7 @@ window.detailMember=safe(async function(id){
       <div class="detail-card main-profile">
         <h3>${esc(m.name||'')}</h3>
         <p>${esc(m.phone||'-')}</p>
-        <div class="chip-row"><span class="chip">${esc(m.grade||'일반')}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span></div>
+        <div class="chip-row"><span class="chip">${esc(memberGradeLabel(m.grade))}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span></div>
         <small>가입 ${esc(m.created_at||'-')} · 최근상담 ${esc(m.last_contact_at||'없음')}</small>
       </div>
       <div class="detail-card"><b>${summary.recommendations||0}</b><span>추천 이력</span></div>
@@ -876,7 +881,7 @@ async function generate(){
     const fallback = buildFallbackAnalysis(currentCombos, latestStatsCache, body.mode);
     currentAnalysis=normalizeText(d.analysis||d.ai_analysis||d.engine?.summary||fallback);
     currentSms=normalizeText(d.sms||'') || buildTemplateMessage(getSelectedMember(), currentRound, currentCombos, currentAnalysis);
-    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC3-13 회원 연동 엔진` : '생성 완료');
+    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC4-5 심층분석 엔진` : '생성 완료');
     renderCombos(currentCombos,currentDetails);
     renderAnalysis(currentAnalysis);
     renderEngine(d.engine,currentDetails);
@@ -905,7 +910,7 @@ async function saveMember(){
 }
 async function addMember(){
   const id=$('mId')?.value;
-  const body={name:$('mName')?.value||'', phone:$('mPhone')?.value||'', grade:$('mGrade')?.value||'일반', status:$('mStatus')?.value||'활성', priority:$('mPriority')?.value||'보통', source:$('mSource')?.value||'직접등록', memo:$('mMemo')?.value||''};
+  const body={name:$('mName')?.value||'', phone:$('mPhone')?.value||'', grade:memberGradeLabel($('mGrade')?.value||'일반'), status:$('mStatus')?.value||'활성', priority:$('mPriority')?.value||'보통', source:$('mSource')?.value||'직접등록', memo:$('mMemo')?.value||''};
   if(!body.name.trim()){ alert('회원 이름을 입력하세요.'); return; }
   if(id) await api('/api/members/'+id,{method:'PUT',body}); else await api('/api/members',{method:'POST',body});
   ['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,''));
