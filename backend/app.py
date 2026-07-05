@@ -27,9 +27,9 @@ DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
 app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-12')
-RC3_8_VERSION = 'V2_STABLE_RC3_12'
-RC3_9_VERSION = 'V2_STABLE_RC3_12'
-RC3_10_VERSION = 'V2_STABLE_RC3_12'
+RC3_8_VERSION = 'V2_STABLE_RC3_15'
+RC3_9_VERSION = 'V2_STABLE_RC3_15'
+RC3_10_VERSION = 'V2_STABLE_RC3_15'
 app.mount('/static', StaticFiles(directory=str(FRONT)), name='static')
 
 
@@ -307,6 +307,62 @@ def table_cols(c, table):
     try: return [r[1] for r in c.execute(f'PRAGMA table_info({table})').fetchall()]
     except Exception: return []
 
+
+# === RC3-15: 당첨번호 회차 무결성 보조 ===
+def _rc315_expected_round_and_completed(now_dt=None):
+    """현재 한국시간 기준 추천 회차와 실제 추첨 완료 회차를 분리합니다.
+    예: 1232회 추천 기간이어도 추첨 전이면 완료 회차는 1231회입니다.
+    """
+    try:
+        dt = now_dt or (datetime.datetime.utcnow() + datetime.timedelta(hours=9))
+        first = datetime.date(2002, 12, 7)
+        today = dt.date() if isinstance(dt, datetime.datetime) else dt
+        expected = int(((today - first).days // 7) + 1) if today >= first else 1
+        draw_dt = datetime.datetime.combine(first + datetime.timedelta(days=(expected-1)*7), datetime.time(20, 35))
+        completed = expected if dt >= draw_dt else max(1, expected - 1)
+        return expected, completed
+    except Exception:
+        return 0, 0
+
+
+def _rc315_clean_future_draws_in_conn(c):
+    """추첨 전/미래 회차에 잘못 저장된 당첨번호를 제거합니다.
+    RC3-15 핵심: 추천 회차(다음 회차)와 당첨 확인 회차(최근 추첨 완료 회차)를 분리합니다.
+    """
+    expected, completed = _rc315_expected_round_and_completed()
+    removed = 0
+    suspicious = []
+    try:
+        rows = c.execute('SELECT round_no,numbers,bonus,source,updated_at FROM draws WHERE round_no>? ORDER BY round_no DESC', (completed,)).fetchall()
+        for row in rows:
+            suspicious.append(dict(row) if hasattr(row, 'keys') else {'round_no': row[0]})
+        c.execute('DELETE FROM draws WHERE round_no>?', (completed,))
+        removed = int(getattr(c, 'rowcount', 0) or 0)
+    except Exception:
+        removed = 0
+    return {'expected_round': expected, 'completed_round': completed, 'removed': removed, 'suspicious': suspicious}
+
+
+def _rc315_validate_draw_payload(round_no, numbers, bonus, allow_completed_only=True):
+    nums = parse_nums(numbers)
+    if len(nums) != 6:
+        raise HTTPException(400, '당첨번호 6개가 필요합니다.')
+    if len(set(nums)) != 6 or any(n < 1 or n > 45 for n in nums):
+        raise HTTPException(400, '당첨번호는 1~45 사이의 서로 다른 6개 숫자여야 합니다.')
+    try:
+        b = int(bonus)
+    except Exception:
+        b = 0
+    if not (1 <= b <= 45):
+        raise HTTPException(400, '보너스 번호는 1~45 사이여야 합니다.')
+    if b in nums:
+        raise HTTPException(400, '보너스 번호는 당첨번호 6개와 달라야 합니다.')
+    expected, completed = _rc315_expected_round_and_completed()
+    r = int(round_no or 0)
+    if allow_completed_only and completed and r > completed:
+        raise HTTPException(400, f'{r}회는 아직 추첨 완료 전입니다. 현재 저장 가능한 최신 당첨번호는 {completed}회입니다.')
+    return r, nums, b, expected, completed
+
 def init_db():
     with con() as c:
         c.execute('CREATE TABLE IF NOT EXISTS admins(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, name TEXT DEFAULT "관리자", password_hash TEXT NOT NULL, is_active INTEGER DEFAULT 1, created_at TEXT, last_login_at TEXT)')
@@ -419,6 +475,8 @@ def init_db():
         except Exception:
             c.execute('UPDATE settings SET value=?, updated_at=? WHERE key=?', ('600', now(), 'session_timeout_minutes'))
         c.execute('INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES(?,?,?)', ('auto_logout_warning_minutes', '5', now()))
+        # RC3-15: 운영 DB에 1232회처럼 추첨 전 회차가 잘못 저장되어 있으면 시작 시 자동 정리
+        _rc315_clean_future_draws_in_conn(c)
         c.commit()
 
 def log_action(admin, action, detail='', request: Request|None=None):
@@ -735,14 +793,20 @@ def save_draw_if_missing(draw):
     if not draw:
         return None
     try:
+        r, nums, bonus, expected, completed = _rc315_validate_draw_payload(draw.get('round_no'), draw.get('numbers', []), draw.get('bonus', 0), allow_completed_only=True)
+        draw['round_no'] = r
+        draw['numbers'] = nums
+        draw['bonus'] = bonus
         with con() as c:
-            old = c.execute('SELECT round_no FROM draws WHERE round_no=?', (int(draw['round_no']),)).fetchone()
+            old = c.execute('SELECT round_no FROM draws WHERE round_no=?', (r,)).fetchone()
             if not old:
-                c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (int(draw['round_no']), draw.get('draw_date',''), json.dumps(draw.get('numbers',[])), int(draw.get('bonus') or 0), draw.get('source','official'), now()))
+                c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (r, draw.get('draw_date',''), json.dumps(nums), bonus, draw.get('source','official'), now()))
                 c.commit()
         return draw
+    except HTTPException:
+        return None
     except Exception:
-        return draw
+        return None
 
 def get_draw(round_no:int):
     with con() as c:
@@ -2261,8 +2325,11 @@ def next_draw_round(authorization: str|None = Header(default=None)):
     require_admin(authorization)
     expected = expected_lotto_round()
     check = resolve_draw_for_check(expected, allow_fetch=True)
+    _, completed_round = _rc315_expected_round_and_completed()
     with con() as c:
-        latest=c.execute('SELECT * FROM draws ORDER BY round_no DESC LIMIT 1').fetchone()
+        _rc315_clean_future_draws_in_conn(c)
+        c.commit()
+        latest=c.execute('SELECT * FROM draws WHERE round_no<=? ORDER BY round_no DESC LIMIT 1', (completed_round or 999999,)).fetchone()
     latest_obj = None
     latest_round = None
     if latest:
@@ -2302,12 +2369,13 @@ def fetch_draw_official_api(req: dict, request:Request, authorization: str|None 
 
 @app.post('/api/draws')
 def save_draw(req:DrawReq, request:Request, authorization: str|None = Header(default=None)):
-    admin=require_admin(authorization); nums=parse_nums(req.numbers)
-    if len(nums)!=6: raise HTTPException(400,'당첨번호 6개가 필요합니다.')
+    admin=require_admin(authorization)
+    r, nums, bonus, expected, completed = _rc315_validate_draw_payload(req.round_no, req.numbers, req.bonus, allow_completed_only=True)
     with con() as c:
-        c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)',(req.round_no,req.draw_date,json.dumps(nums),req.bonus,'manual',now()))
+        _rc315_clean_future_draws_in_conn(c)
+        c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)',(r,req.draw_date or draw_date_for_round(r),json.dumps(nums),bonus,'manual',now()))
         c.commit()
-    log_action(admin,'SAVE_DRAW',f'{req.round_no}회차 당첨번호 저장',request); return {'ok':True}
+    log_action(admin,'SAVE_DRAW',f'{r}회차 당첨번호 저장 · 완료가능최신 {completed}회',request); return {'ok':True, 'round_no':r, 'numbers':nums, 'bonus':bonus, 'completed_round':completed}
 
 
 def _auto_check_round(admin, req:AutoWinReq, request:Request):
@@ -2330,8 +2398,11 @@ def _auto_check_round(admin, req:AutoWinReq, request:Request):
         raise HTTPException(400,'보너스 번호를 입력하세요.')
     if int(req.bonus) in wins:
         raise HTTPException(400,'보너스 번호는 당첨번호 6개와 달라야 합니다.')
+    # RC3-15: 당첨확인 저장 회차는 반드시 실제 추첨 완료 회차까지만 허용합니다.
+    req.round_no, wins, req.bonus, expected_round, completed_round = _rc315_validate_draw_payload(req.round_no, wins, req.bonus, allow_completed_only=True)
     with con() as c:
-        c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (req.round_no, req.draw_date, json.dumps(wins), int(req.bonus), (resolved.get('source') if resolved else 'manual_auto'), now()))
+        _rc315_clean_future_draws_in_conn(c)
+        c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (req.round_no, req.draw_date or draw_date_for_round(req.round_no), json.dumps(wins), int(req.bonus), (resolved.get('source') if resolved else 'manual_auto'), now()))
         recs = c.execute('''
             SELECT r.id,
                    r.member_id,
@@ -4875,3 +4946,31 @@ def rc314_status(authorization: str|None = Header(default=None)):
         'summary': '회원 상세 페이지에서 추천이력 노출을 제거하고 문구이력/당첨이력 중심으로 정리했습니다.',
         'sections': ['member_profile', 'memo', 'sms_logs', 'winning_checks']
     }
+
+
+# === RC3-15: 당첨번호 회차 무결성 점검/복구 ===
+@app.get('/api/rc3-15/draw-integrity')
+def rc315_draw_integrity(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    expected, completed = _rc315_expected_round_and_completed()
+    with con() as c:
+        future_rows = c.execute('SELECT round_no,draw_date,numbers,bonus,source,updated_at FROM draws WHERE round_no>? ORDER BY round_no DESC', (completed,)).fetchall()
+        latest_rows = c.execute('SELECT round_no,draw_date,numbers,bonus,source,updated_at FROM draws WHERE round_no<=? ORDER BY round_no DESC LIMIT 15', (completed or 999999,)).fetchall()
+    return {
+        'ok': len(future_rows) == 0,
+        'version': 'RC3-15',
+        'expected_round': expected,
+        'completed_round': completed,
+        'future_or_invalid_draws': [dict(r) for r in future_rows],
+        'latest_valid_draws': [{'round_no':r['round_no'], 'draw_date':r['draw_date'], 'numbers':parse_nums(r['numbers']), 'bonus':r['bonus'], 'source':r['source'], 'updated_at':r['updated_at']} for r in latest_rows],
+        'message': 'ok=false이면 /api/rc3-15/repair-draws 를 실행하면 추첨 전 회차 당첨번호가 정리됩니다.'
+    }
+
+@app.post('/api/rc3-15/repair-draws')
+def rc315_repair_draws(request:Request, authorization: str|None = Header(default=None)):
+    admin = require_admin(authorization)
+    with con() as c:
+        result = _rc315_clean_future_draws_in_conn(c)
+        c.commit()
+    log_action(admin, 'RC3_15_REPAIR_DRAWS', f'추첨 전/미래 회차 당첨번호 {result.get("removed",0)}건 정리', request)
+    return {'ok': True, 'version': 'RC3-15', **result, 'message': f'잘못 저장된 추첨 전/미래 회차 {result.get("removed",0)}건을 정리했습니다.'}
