@@ -786,7 +786,7 @@ window.selectMember=function(id){
   toast(`${m.name} 회원을 선택했습니다.`);
 };
 window.detailMember=safe(async function(id){
-  let d; try{ d=await api('/api/members/'+id+'/detail'); }catch(e){ d=await api('/api/members/'+id); }
+  const d = await api('/api/members/'+id+'/detail');
   const m=d.member || d;
   const title=$('memberDetailTitle');
   const sub=$('memberDetailSub');
