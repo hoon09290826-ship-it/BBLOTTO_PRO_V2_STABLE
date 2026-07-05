@@ -26,7 +26,8 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V50 RC3-7 STABILITY')
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-8')
+RC3_8_VERSION = 'V2_STABLE_RC3_8'
 app.mount('/static', StaticFiles(directory=str(FRONT)), name='static')
 
 
@@ -1090,6 +1091,82 @@ def rc37_top3(combos, details):
         rows.append({'numbers': combo, 'score': d.get('score',0), 'star': d.get('star',''), 'grade': d.get('grade','STANDARD')})
     return rows
 
+
+# RC3-8: 실사용 안정화 / 추천 포트폴리오 품질 보강
+def rc38_overlap(a, b):
+    try:
+        return len(set(int(x) for x in a) & set(int(x) for x in b))
+    except Exception:
+        return 0
+
+def rc38_portfolio_reorder(combos, details, max_overlap=3):
+    """점수 순위만 따르지 않고 조합 간 중복을 줄여 실사용 추천 포트폴리오로 재정렬합니다."""
+    combos = [list(map(int, c)) for c in (combos or [])]
+    details = list(details or [])
+    rows = []
+    for i, combo in enumerate(combos):
+        d = dict(details[i]) if i < len(details) and isinstance(details[i], dict) else {}
+        try:
+            score = float(d.get('score') or d.get('ai_score') or d.get('vip_score') or 0)
+        except Exception:
+            score = 0.0
+        rows.append({'idx': i, 'combo': combo, 'detail': d, 'score': score})
+    rows.sort(key=lambda x: (-x['score'], sum(x['combo']), x['combo']))
+    selected, rest = [], []
+    for row in rows:
+        if not selected or all(rc38_overlap(row['combo'], s['combo']) <= max_overlap for s in selected):
+            selected.append(row)
+        else:
+            rest.append(row)
+    selected.extend(rest)
+    new_combos = [r['combo'] for r in selected]
+    new_details = [r['detail'] for r in selected]
+    # 화면 순위와 실제 저장 순위를 일치시킵니다.
+    for i, d in enumerate(new_details):
+        d['rank'] = i + 1
+    return new_combos, new_details
+
+def rc38_generation_report(combos, details, safe_round, safe_mode):
+    scores=[]
+    for d in details or []:
+        try: scores.append(float(d.get('score') or d.get('ai_score') or d.get('vip_score') or 0))
+        except Exception: pass
+    overlap_count=0
+    max_overlap=0
+    for i in range(len(combos or [])):
+        for j in range(i+1, len(combos or [])):
+            ov=rc38_overlap(combos[i], combos[j]); max_overlap=max(max_overlap, ov)
+            if ov >= 4: overlap_count += 1
+    flat=[int(n) for c in combos or [] for n in c]
+    zone=[sum(1<=n<=15 for n in flat), sum(16<=n<=30 for n in flat), sum(31<=n<=45 for n in flat)]
+    odd=sum(n%2 for n in flat)
+    total=len(flat) or 1
+    return {
+        'rc_version': RC3_8_VERSION,
+        'round_no': safe_round,
+        'mode': safe_mode,
+        'combo_count': len(combos or []),
+        'avg_score': round(sum(scores)/len(scores), 1) if scores else 0,
+        'max_score': round(max(scores), 1) if scores else 0,
+        'min_score': round(min(scores), 1) if scores else 0,
+        'max_overlap': max_overlap,
+        'high_overlap_pairs': overlap_count,
+        'zone_distribution': zone,
+        'odd_even_total': {'odd': odd, 'even': total-odd},
+        'quality_message': 'RC3-8 포트폴리오 보정: 고득점 조합을 우선하되 조합 간 중복과 구간 쏠림을 줄였습니다.'
+    }
+
+def rc38_db_health_snapshot():
+    tables = ['admins','members','recommendations','sms_logs','winning_checks','admin_logs','login_logs','settings']
+    out = {'version': RC3_8_VERSION, 'db_engine': DB_ENGINE, 'database_url_set': bool(DATABASE_URL), 'tables': {}, 'db_path': str(DB) if DB_ENGINE == 'sqlite' else 'postgresql'}
+    with con() as c:
+        for t in tables:
+            try:
+                out['tables'][t] = {'count': c.execute(f'SELECT COUNT(*) c FROM {t}').fetchone()['c'], 'columns': table_cols(c, t)}
+            except Exception as e:
+                out['tables'][t] = {'error': str(e)[:160], 'columns': []}
+    return out
+
 class LoginReq(BaseModel): username:str='admin'; password:str
 class AdminReq(BaseModel): username:str; name:str='관리자'; password:str; role:str='전체권한'; memo:str=''
 class AdminUpdateReq(BaseModel): name:str|None=None; password:str|None=None; role:str|None=None; memo:str|None=None; is_active:int|None=None
@@ -1311,7 +1388,28 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V50', 'phase': 'RC3_3_MEMBER_DB_POSTGRES', 'features': ['server_foundation','members','recommendations','stats100','sms_admin_backup','cloud_deploy','production_checklist'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-8_STABILITY_HISTORY_DB', 'rc_version': RC3_8_VERSION, 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy'], 'time': now()}
+
+@app.get('/api/rc3-8/health')
+def rc38_health(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    snap = rc38_db_health_snapshot()
+    required = {'admins':['id','username','password_hash'], 'members':['id','name','status'], 'recommendations':['id','member_id','round_no','numbers','created_at'], 'admin_logs':['id','action','created_at']}
+    missing = {t:[col for col in cols if col not in snap['tables'].get(t,{}).get('columns',[])] for t, cols in required.items()}
+    snap['ok'] = not any(missing.values())
+    snap['missing_required_columns'] = missing
+    snap['message'] = 'RC3-8 상태 점검입니다. ok=true이면 핵심 테이블과 컬럼이 준비된 상태입니다.'
+    return snap
+
+@app.get('/api/rc3-8/recommendation-summary')
+def rc38_recommendation_summary(limit:int=20, authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    limit=max(1, min(int(limit or 20), 100))
+    with con() as c:
+        recent=c.execute('SELECT id,member_id,member_name,round_no,mode,count,avg_score,created_at FROM recommendations ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        by_round=c.execute('SELECT round_no, COUNT(*) c, AVG(avg_score) avg_score FROM recommendations GROUP BY round_no ORDER BY round_no DESC LIMIT 20').fetchall()
+        by_member=c.execute('SELECT COALESCE(member_name,"미지정") member_name, COUNT(*) c, MAX(created_at) latest FROM recommendations GROUP BY COALESCE(member_name,"미지정") ORDER BY c DESC, latest DESC LIMIT 20').fetchall()
+    return {'ok': True, 'version': RC3_8_VERSION, 'recent':[dict(r) for r in recent], 'by_round':[dict(r) for r in by_round], 'by_member':[dict(r) for r in by_member]}
 
 @app.get('/')
 def login_page(): return FileResponse(FRONT/'login.html')
@@ -1886,12 +1984,15 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
     safe_mode=req.mode or 'balanced'
     combos, details, st = make_premium_combos(safe_count, req.fixed, excluded_value, safe_mode)
     details = rc37_enrich_details(combos, details)
+    combos, details = rc38_portfolio_reorder(combos, details)
+    details = rc37_enrich_details(combos, details)
     analysis=clean_template_text(build_analysis_text(safe_round, st, safe_mode, req.fixed, excluded_value, details))
     sms=clean_template_text(build_sms(member_name, safe_round, combos, analysis, details))
     engine=_engine_summary(details, st)
-    engine['phase']='RC3-7'
+    engine['phase']='RC3-8'
+    engine['rc38_report']=rc38_generation_report(combos, details, safe_round, safe_mode)
     engine['top3']=rc37_top3(combos, details)
-    engine['quality_guide']='VIP 94점 이상 / PREMIUM 89점 이상 / STANDARD 기본 추천'
+    engine['quality_guide']='VIP 94점 이상 / PREMIUM 89점 이상 / STANDARD 기본 추천 · RC3-8 중복/분산 보정 적용'
     with con() as c:
         # Render에 남아 있는 오래된 DB도 요청 시점에 한 번 더 보정합니다.
         rec_cols=table_cols(c, 'recommendations')
@@ -1914,11 +2015,11 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
         rid=cur.lastrowid
         try:
             c.execute('CREATE TABLE IF NOT EXISTS engine_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation_id INTEGER DEFAULT 0, round_no INTEGER DEFAULT 0, member_id INTEGER DEFAULT 0, mode TEXT DEFAULT "balanced", count INTEGER DEFAULT 0, candidate_count INTEGER DEFAULT 0, selected_count INTEGER DEFAULT 0, avg_score REAL DEFAULT 0, max_score REAL DEFAULT 0, min_score REAL DEFAULT 0, engine_version TEXT DEFAULT "", created_by INTEGER DEFAULT 0, created_at TEXT)')
-            c.execute('INSERT INTO engine_runs(recommendation_id,round_no,member_id,mode,count,candidate_count,selected_count,avg_score,max_score,min_score,engine_version,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', (rid, safe_round, member_id or 0, safe_mode, len(combos), engine.get('candidate_count',0), engine.get('selected_count',len(combos)), engine.get('avg_score',0), engine.get('max_score',0), engine.get('min_score',0), engine.get('engine_version') or engine.get('version') or 'BBLOTTO_AI_ENGINE_V2_RC2_SPRINT2_3', admin['id'], now()))
+            c.execute('INSERT INTO engine_runs(recommendation_id,round_no,member_id,mode,count,candidate_count,selected_count,avg_score,max_score,min_score,engine_version,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', (rid, safe_round, member_id or 0, safe_mode, len(combos), engine.get('candidate_count',0), engine.get('selected_count',len(combos)), engine.get('avg_score',0), engine.get('max_score',0), engine.get('min_score',0), engine.get('engine_version') or engine.get('version') or 'BBLOTTO_PRO_V2_STABLE_RC3_8', admin['id'], now()))
         except Exception:
             pass
         c.commit()
-    log_action(admin,'GENERATE',f'{safe_round}회차 {len(combos)}조합 생성 · 평균 {engine.get("avg_score",0)}점',request)
+    log_action(admin,'GENERATE_RC3_8',f'{safe_round}회차 {len(combos)}조합 생성 · 평균 {engine.get("avg_score",0)}점 · 최대중복 {engine.get("rc38_report",{}).get("max_overlap",0)}',request)
     return {'id':rid,'round_no':safe_round,'round':safe_round,'sets':combos,'combos':combos,'details':details,'top3':engine.get('top3',[]),'engine':engine,'analysis':analysis,'sms':sms,'member_id':member_id,'member_name':member_name,'member_notice':sms,'quality_guide':engine.get('quality_guide')}
 
 
@@ -3442,7 +3543,7 @@ _install_recommend_engine_v1(globals())
 
 
 # ===== RC2 SPRINT 2-3: AI ENGINE V2 + DASHBOARD INSIGHT PATCH =====
-SPRINT23_ENGINE_VERSION = 'BBLOTTO_AI_ENGINE_V2_RC2_SPRINT2_3'
+SPRINT23_ENGINE_VERSION = 'BBLOTTO_PRO_V2_STABLE_RC3_8'
 
 def ensure_sprint23_schema():
     """추천 엔진 실행 이력/대시보드 캐시용 테이블을 안전하게 준비합니다."""

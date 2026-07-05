@@ -253,9 +253,10 @@ function renderCombos(sets, details=[]){
   }
   box.classList.remove('empty');
   const top3 = top3FromDetails(sets, details);
-  const topHtml = `<div class="top3-panel"><h4>TOP 3 우선 추천</h4><div class="top3-grid">${top3.map(t=>{
+  const topHtml = `<div class="top3-panel rc38-top3"><h4>TOP 3 우선 추천 <small>RC3-8 분산 보정</small></h4><div class="top3-grid">${top3.map(t=>{
     const d=t.detail||{}; const score=Number(d.score ?? d.vip_score ?? d.ai_score ?? 0);
-    return `<div class="top3-card"><b>${t.idx}조합</b><span>${gradeLabel(d)}</span><strong>${score?score.toFixed(1):'-'}점</strong><em>${starLabel(d)}</em></div>`;
+    const nums=(t.nums||[]).map(n=>`<span class="mini-ball ${ballClass(n)}">${n}</span>`).join('');
+    return `<div class="top3-card"><b>${t.idx}조합</b><div class="mini-nums">${nums}</div><span>${gradeLabel(d)}</span><strong>${score?score.toFixed(1):'-'}점</strong><em>${starLabel(d)}</em></div>`;
   }).join('')}</div></div>`;
   const cards = sets.map((arr,i)=>{
     const d = details[i] || {};
@@ -325,7 +326,7 @@ function renderEngine(engine, details=[]){
   const top = scores.length ? Math.max(...scores).toFixed(1) : '';
   const min = scores.length ? Math.min(...scores).toFixed(1) : (engine?.min_score ?? '');
   const v2 = engine?.v2_pipeline_report || engine?.v10_pipeline_report || {};
-  const pipeline = v2.pipeline || '후보 생성 → 필터 → 재평가 → 최종선별';
+  const pipeline = engine?.rc38_report?.quality_message || v2.pipeline || '후보 생성 → 필터 → 중복/분산 보정 → 최종선별';
   const stage1 = v2.stage1_candidates ?? candidate ?? '-';
   const stage2 = v2.stage2_top500 ?? v2.stage2_filters ?? '-';
   const stage3 = v2.stage3_top100 ?? v2.stage3_portfolio ?? '-';
@@ -336,7 +337,7 @@ function renderEngine(engine, details=[]){
     <span><b>${filter || '-'}</b><small>최종 선별</small></span>
   </div>
   <div class="ai-pipeline-card">
-    <b>RC2 Sprint 2-3 V2 AI 엔진</b>
+    <b>RC3-8 V2 Stable AI 엔진</b>
     <p>${esc(pipeline)}</p>
     <div class="mini-stats"><span>1차 후보 ${esc(stage1)}</span><span>상위500 ${esc(stage2)}</span><span>상위100 ${esc(stage3)}</span></div>
     <small>${esc(v2.summary || '최근 100회 통계와 포트폴리오 분산을 함께 적용했습니다.')}</small>
