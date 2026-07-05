@@ -499,6 +499,23 @@ function formatLongText(text, maxLen=900){
   return `<pre class="detail-pre">${safeText}</pre>`;
 }
 
+function formatMoney(v){ return Number(v||0).toLocaleString() + '원'; }
+function renderRecommendCards(items){
+  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">추천 이력이 없습니다.</div>';
+  return items.slice(0,20).map(r=>{
+    const sets = normalizeCombos(r.numbers || []);
+    const nums = sets.slice(0,5).map((c,i)=>`<div class="mini-rec-line"><b>${i+1}</b><span>${c.join(', ')}</span></div>`).join('') || '<span class="hint">번호 없음</span>';
+    return `<details class="detail-history rec-history" open>
+      <summary><b>${esc(r.round_no || '-')}회 추천</b><small>${esc(r.created_at || '')} · ${esc(r.mode||'balanced')} · 평균 ${esc(r.avg_score||'-')}</small></summary>
+      <div class="mini-rec-list">${nums}</div>
+      ${formatLongText(r.analysis || '', 500)}
+    </details>`;
+  }).join('');
+}
+function renderNoteCards(items){
+  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">상담 이력이 없습니다.</div>';
+  return items.slice(0,30).map(r=>`<div class="note-card"><div><b>${esc(r.note_type||'상담')}</b><small>${esc(r.created_at||'')} · ${esc(r.created_by_name||'관리자')}</small></div>${formatLongText(r.note||'', 700)}</div>`).join('');
+}
 function renderHistoryCards(items, type){
   if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">이력이 없습니다.</div>';
   return items.slice(0, 30).map((r)=>{
@@ -621,24 +638,44 @@ window.detailMember=safe(async function(id){
   if(title) title.textContent = `${m.name || '회원'} 상세`;
   if(sub) sub.textContent = `${m.phone || '-'} / ${m.grade || '일반'} / ${m.status || '활성'} / ${m.priority || '보통'}`;
   const summary = d.summary || {};
+  const ranks = summary.rank_counts || {};
+  const rankText = ['1등','2등','3등','4등','5등','낙첨'].filter(k=>ranks[k]).map(k=>`${k} ${ranks[k]}건`).join(' · ') || '확인 이력 없음';
   body.innerHTML=`
-    <div class="detail-profile-grid">
+    <div class="detail-profile-grid rc43-grid">
       <div class="detail-card main-profile">
         <h3>${esc(m.name||'')}</h3>
         <p>${esc(m.phone||'-')}</p>
         <div class="chip-row"><span class="chip">${esc(m.grade||'일반')}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span></div>
+        <small>가입 ${esc(m.created_at||'-')} · 최근상담 ${esc(m.last_contact_at||'없음')}</small>
       </div>
+      <div class="detail-card"><b>${summary.recommendations||0}</b><span>추천 이력</span></div>
       <div class="detail-card"><b>${summary.sms||0}</b><span>문구 이력</span></div>
-      <div class="detail-card"><b>${summary.checks||0}</b><span>당첨 이력</span></div>
+      <div class="detail-card"><b>${summary.checks||0}</b><span>당첨 확인</span></div>
       <div class="detail-card"><b>${esc(summary.best_rank||'없음')}</b><span>최고 결과</span></div>
+      <div class="detail-card"><b>${formatMoney(summary.total_profit||0)}</b><span>누적 손익</span></div>
     </div>
-    <div class="detail-section"><h4>회원 메모</h4><div class="memo-box">${esc(m.memo||'메모 없음')}</div></div>
+    <div class="detail-section rc43-summary"><h4>적중 요약</h4><p>${esc(rankText)}</p><p>누적 당첨금 ${formatMoney(summary.total_prize||0)} · 누적 구매금 ${formatMoney(summary.total_cost||0)} · ROI ${esc(summary.roi||0)}%</p></div>
+    <div class="detail-section"><h4>회원 메모</h4><textarea id="memberMemoEdit" class="detail-edit-textarea">${esc(m.memo||'')}</textarea><div class="btnrow"><button onclick="saveMemberMemo(${m.id})" class="primary">메모 저장</button></div></div>
+    <div class="detail-section"><h4>상담 이력 추가</h4><div class="note-write"><select id="memberNoteType"><option>상담</option><option>결제</option><option>추천안내</option><option>당첨확인</option><option>기타</option></select><textarea id="memberNoteText" placeholder="상담/안내 내용을 입력하세요."></textarea><button onclick="saveMemberNote(${m.id})" class="primary">이력 추가</button></div>${renderNoteCards(d.notes)}</div>
+    <div class="detail-section"><h4>최근 추천번호</h4>${renderRecommendCards(d.recommendations)}</div>
     <div class="detail-section"><h4>문구 이력</h4>${renderHistoryCards(d.sms_logs,'sms')}</div>
     <div class="detail-section"><h4>당첨 이력</h4>${renderHistoryCards(d.winning_checks,'winning')}</div>
   `;
   const selectBtn=$('memberDetailSelect');
   if(selectBtn) selectBtn.onclick=()=>selectMember(m.id);
   openPanel('memberDetailPage','회원 상세');
+});
+window.saveMemberMemo=safe(async function(id){
+  await api('/api/members/'+id+'/memo',{method:'PUT',body:{memo:$('memberMemoEdit')?.value||''}});
+  toast('회원 메모를 저장했습니다.');
+  await detailMember(id);
+  await loadMembers();
+});
+window.saveMemberNote=safe(async function(id){
+  await api('/api/members/'+id+'/notes',{method:'POST',body:{note:$('memberNoteText')?.value||'',note_type:$('memberNoteType')?.value||'상담'}});
+  toast('상담 이력을 추가했습니다.');
+  await detailMember(id);
+  await loadMembers();
 });
 window.deleteMember=safe(async function(id){ if(!confirm('삭제할까요?')) return; await api('/api/members/'+id,{method:'DELETE'}); await loadMembers(); await loadDashboard(); });
 window.downloadApi=function(path){ const t=token(); location.href=path+(path.includes('?')?'&':'?')+'token='+encodeURIComponent(t); };

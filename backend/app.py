@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-12')
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC4-3')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
 RC3_9_VERSION = 'V2_STABLE_RC3_15'
 RC3_10_VERSION = 'V2_STABLE_RC3_15'
@@ -395,6 +395,7 @@ def init_db():
         c.execute('CREATE TABLE IF NOT EXISTS login_logs(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER DEFAULT 0, username TEXT DEFAULT "", success INTEGER DEFAULT 0, ip TEXT DEFAULT "", user_agent TEXT DEFAULT "", message TEXT DEFAULT "", created_at TEXT)')
         c.execute('CREATE TABLE IF NOT EXISTS backup_history(id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT, reason TEXT DEFAULT "manual", size_bytes INTEGER DEFAULT 0, created_by INTEGER, created_at TEXT)')
         c.execute('CREATE TABLE IF NOT EXISTS members(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT DEFAULT "", grade TEXT DEFAULT "일반", memo TEXT DEFAULT "", created_by INTEGER, created_at TEXT)')
+        c.execute("CREATE TABLE IF NOT EXISTS member_notes(id INTEGER PRIMARY KEY AUTOINCREMENT, member_id INTEGER, note TEXT DEFAULT '', note_type TEXT DEFAULT '상담', created_by INTEGER DEFAULT 0, created_by_name TEXT DEFAULT '', created_at TEXT)")
         # V34 Final Member Phase3: 기존 DB와 충돌 없이 필요한 컬럼만 추가
         member_cols = table_cols(c, 'members')
         if 'status' not in member_cols:
@@ -1288,6 +1289,8 @@ class MyAccountReq(BaseModel): name:str|None=None; phone:str|None=None; memo:str
 class PasswordReq(BaseModel): password:str
 class MemberReq(BaseModel): name:str; phone:str=''; grade:str='일반'; memo:str=''; status:str='활성'; priority:str='보통'; source:str='직접등록'
 class MemberStatusReq(BaseModel): status:str; memo:str|None=None
+class MemberMemoReq(BaseModel): memo:str=''
+class MemberNoteReq(BaseModel): note:str; note_type:str='상담'
 class MemberBulkStatusReq(BaseModel): member_ids:list[int]; status:str
 class GenerateReq(BaseModel): member_id:int|None=None; round_no:int=1231; count:int=10; mode:str='balanced'; fixed:str=''; excluded:str=''; exclude:str='' # exclude는 기존 프론트 호환용
 class SmsReq(BaseModel): member_id:int|None=None; member_name:str=''; phone:str=''; round_no:int; body:str; combos:list[list[int]]=[]; send_now:bool=False
@@ -1502,7 +1505,7 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-14_MEMBER_DETAIL_CLEANUP', 'rc_version': 'RC3-14', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair','member_detail_message_history','member_detail_winning_history','member_detail_recommendation_hidden'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC4-3_MEMBER_DETAIL_PLUS', 'rc_version': 'RC4-3', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair','member_detail_message_history','member_detail_winning_history','member_detail_recommendation_hidden'], 'time': now()}
 
 @app.get('/api/rc3-8/health')
 def rc38_health(authorization: str|None = Header(default=None)):
@@ -2062,21 +2065,72 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
     with con() as c:
         m=c.execute('SELECT * FROM members WHERE id=?',(member_id,)).fetchone()
         if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
-        recs=c.execute('SELECT id,round_no,mode,count,numbers,analysis,created_at FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
-        sms=c.execute('SELECT id,round_no,body,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
-        wins=c.execute('SELECT round_no,target_numbers,win_numbers,bonus,rank,prize,cost,profit,roi,created_at FROM winning_checks WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
+        recs=c.execute('SELECT id,round_no,mode,count,numbers,analysis,avg_score,created_at FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
+        sms=c.execute('SELECT id,round_no,body,status,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
+        wins=c.execute('SELECT round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_at FROM winning_checks WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
+        notes=c.execute('SELECT id,note,note_type,created_by_name,created_at FROM member_notes WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
     rec_list=[]
     for r in recs:
-        d=dict(r); d['numbers']=json.loads(d.get('numbers') or '[]'); rec_list.append(d)
-    win_list=[dict(r) for r in wins]
+        d=dict(r)
+        try: d['numbers']=json.loads(d.get('numbers') or '[]')
+        except Exception: d['numbers']=[]
+        rec_list.append(d)
+    win_list=[]
+    for r in wins:
+        d=dict(r)
+        for key in ('target_numbers','win_numbers'):
+            try: d[key]=json.loads(d.get(key) or '[]')
+            except Exception: d[key]=[]
+        win_list.append(d)
     total_prize=sum(w.get('prize') or 0 for w in win_list)
     total_cost=sum(w.get('cost') or 0 for w in win_list)
     total_profit=sum(w.get('profit') or 0 for w in win_list)
+    ranks=collections.Counter([w.get('rank','낙첨') for w in win_list])
     best='없음'
     order={'1등':1,'2등':2,'3등':3,'4등':4,'5등':5,'낙첨':9}
     ranked=[w.get('rank','낙첨') for w in win_list]
     if ranked: best=sorted(ranked, key=lambda x:order.get(x,9))[0]
-    return {'member':dict(m),'recommendations':rec_list,'sms_logs':[dict(r) for r in sms],'winning_checks':win_list,'summary':{'recommendations':len(rec_list),'sms':len(sms),'checks':len(win_list),'best_rank':best,'total_prize':total_prize,'total_cost':total_cost,'total_profit':total_profit,'roi':round((total_profit/total_cost*100),2) if total_cost else 0,'latest_recommendation': rec_list[0]['created_at'] if rec_list else '', 'latest_sms': dict(sms[0])['created_at'] if sms else ''}}
+    return {
+        'member':dict(m),
+        'recommendations':rec_list,
+        'sms_logs':[dict(r) for r in sms],
+        'winning_checks':win_list,
+        'notes':[dict(r) for r in notes],
+        'summary':{
+            'recommendations':len(rec_list),'sms':len(sms),'checks':len(win_list),'notes':len(notes),'best_rank':best,
+            'rank_counts':dict(ranks),'total_prize':total_prize,'total_cost':total_cost,'total_profit':total_profit,
+            'roi':round((total_profit/total_cost*100),2) if total_cost else 0,
+            'latest_recommendation': rec_list[0]['created_at'] if rec_list else '',
+            'latest_sms': dict(sms[0])['created_at'] if sms else '',
+            'latest_note': dict(notes[0])['created_at'] if notes else ''
+        }
+    }
+
+@app.put('/api/members/{member_id}/memo')
+def update_member_memo(member_id:int, req:MemberMemoReq, request:Request, authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    with con() as c:
+        m=c.execute('SELECT id,name FROM members WHERE id=?',(member_id,)).fetchone()
+        if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
+        c.execute('UPDATE members SET memo=?, updated_at=? WHERE id=?',(req.memo, now(), member_id))
+        c.commit()
+    log_action(admin,'UPDATE_MEMBER_MEMO',f'회원 메모 수정: {m["name"]}',request)
+    return {'ok':True,'id':member_id}
+
+@app.post('/api/members/{member_id}/notes')
+def add_member_note(member_id:int, req:MemberNoteReq, request:Request, authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    note=(req.note or '').strip()
+    if not note: raise HTTPException(400,'상담 내용을 입력하세요.')
+    note_type=(req.note_type or '상담').strip()[:20]
+    with con() as c:
+        m=c.execute('SELECT id,name FROM members WHERE id=?',(member_id,)).fetchone()
+        if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
+        c.execute('INSERT INTO member_notes(member_id,note,note_type,created_by,created_by_name,created_at) VALUES(?,?,?,?,?,?)',(member_id,note,note_type,admin['id'],admin.get('name') or admin.get('username') or '',now()))
+        c.execute('UPDATE members SET last_contact_at=?, updated_at=? WHERE id=?',(now(),now(),member_id))
+        c.commit()
+    log_action(admin,'CREATE_MEMBER_NOTE',f'상담 이력 추가: {m["name"]}',request)
+    return {'ok':True,'member_id':member_id}
 
 
 def rc312_resolve_member(c, member_id=None, member_name=''):
