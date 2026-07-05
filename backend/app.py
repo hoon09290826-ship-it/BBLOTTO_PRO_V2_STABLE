@@ -26,8 +26,9 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-8')
-RC3_8_VERSION = 'V2_STABLE_RC3_8'
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-9')
+RC3_8_VERSION = 'V2_STABLE_RC3_9'
+RC3_9_VERSION = 'V2_STABLE_RC3_9'
 app.mount('/static', StaticFiles(directory=str(FRONT)), name='static')
 
 
@@ -1388,7 +1389,7 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-8_STABILITY_HISTORY_DB', 'rc_version': RC3_8_VERSION, 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-9_DB_LOG_BACKUP_STABILITY', 'rc_version': RC3_8_VERSION, 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization'], 'time': now()}
 
 @app.get('/api/rc3-8/health')
 def rc38_health(authorization: str|None = Header(default=None)):
@@ -4243,4 +4244,137 @@ def sprint6_error_policy():
             'admin_required': '관리자 API는 Authorization 헤더가 필요합니다.',
             'safe_message': '예상치 못한 오류는 상세 내부정보 대신 안전한 문구로 반환합니다.'
         }
+    }
+
+
+# === RC3-9: DB / 관리자 로그 / 백업 안정화 ===
+# 운영 중 가장 많이 문제가 생기는 데이터 유지, 관리자 기록, 백업 상태를 한 화면에서 점검하기 위한 API입니다.
+
+RC3_9_REQUIRED_TABLES = ['admins','members','recommendations','sms_logs','winning_checks','admin_logs','login_logs','backup_history','settings','draws']
+
+
+def _rc39_table_count(table: str):
+    try:
+        with con() as c:
+            row = c.execute(f'SELECT COUNT(*) c FROM {table}').fetchone()
+            return {'table': table, 'ok': True, 'count': int(row['c'] if row else 0)}
+    except Exception as e:
+        return {'table': table, 'ok': False, 'count': 0, 'error': str(e)}
+
+
+def _rc39_latest_backup():
+    try:
+        with con() as c:
+            row = c.execute('SELECT * FROM backup_history ORDER BY id DESC LIMIT 1').fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _rc39_backup_files(limit: int = 20):
+    out = []
+    for pattern in ('BBLOTTO*_BACKUP_*.json','BBLOTTO*_BACKUP_*.db','BBLOTTO_RC3_BACKUP_*.json','rc2_sprint6_*.db'):
+        for f in EXPORT_DIR.glob(pattern):
+            try:
+                out.append({'filename': f.name, 'size_bytes': f.stat().st_size, 'modified_at': datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S'), 'format': f.suffix.lstrip('.')})
+            except Exception:
+                pass
+    out.sort(key=lambda x: x.get('modified_at',''), reverse=True)
+    return out[:max(1, min(int(limit or 20), 100))]
+
+
+def _rc39_database_candidates():
+    candidates = []
+    for rel in ['database/bblotto_v34.db', 'database/lotto.db']:
+        f = BASE / rel
+        candidates.append({'path': rel, 'exists': f.exists(), 'size_bytes': f.stat().st_size if f.exists() else 0, 'primary': str(f.resolve()) == str(DB.resolve()) if f.exists() else False})
+    return candidates
+
+
+@app.get('/api/rc3-9/status')
+def rc39_status(authorization: str|None = Header(default=None)):
+    admin = require_admin(authorization)
+    counts = [_rc39_table_count(t) for t in RC3_9_REQUIRED_TABLES]
+    warnings = []
+    if DB_ENGINE == 'sqlite' and not os.getenv('BBLOTTO_DB_DIR') and not str(DB_DIR).startswith('/data'):
+        warnings.append('Railway 운영에서는 PostgreSQL DATABASE_URL 또는 영구 저장소 DB 경로 설정을 권장합니다.')
+    if not _rc39_latest_backup():
+        warnings.append('최근 백업 기록이 없습니다. /api/rc3-9/backup-create 실행을 권장합니다.')
+    failed = [x for x in counts if not x.get('ok')]
+    return {
+        'ok': len(failed) == 0,
+        'version': RC3_9_VERSION,
+        'checked_by': admin.get('username'),
+        'time': now(),
+        'db_engine': DB_ENGINE,
+        'db_path': str(DB) if DB_ENGINE == 'sqlite' else 'postgresql',
+        'export_dir': str(EXPORT_DIR),
+        'tables': counts,
+        'failed_tables': failed,
+        'latest_backup': _rc39_latest_backup(),
+        'backup_files': _rc39_backup_files(10),
+        'database_candidates': _rc39_database_candidates(),
+        'warnings': warnings,
+        'summary': 'RC3-9 DB/백업/운영 로그 안정화 점검 결과입니다.'
+    }
+
+
+@app.post('/api/rc3-9/backup-create')
+def rc39_backup_create(request: Request, authorization: str|None = Header(default=None)):
+    admin = require_admin(authorization)
+    result = create_db_backup('rc3_9_manual', admin)
+    log_action(admin, 'RC3_9_BACKUP_CREATE', f'RC3-9 수동 백업 생성: {result.get("filename","")}', request)
+    return {'ok': True, 'version': RC3_9_VERSION, 'backup': result}
+
+
+@app.get('/api/rc3-9/admin-audit')
+def rc39_admin_audit(limit: int = 100, authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    limit = max(10, min(int(limit or 100), 300))
+    with con() as c:
+        recent = c.execute('SELECT id,username,action,detail,ip,created_at FROM admin_logs ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        by_action = c.execute('SELECT action, COUNT(*) c, MAX(created_at) latest FROM admin_logs GROUP BY action ORDER BY c DESC LIMIT 30').fetchall()
+        logins = c.execute('SELECT username, success, message, ip, created_at FROM login_logs ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        failed_today = c.execute('SELECT COUNT(*) c FROM login_logs WHERE success=0 AND created_at LIKE ?', (datetime.datetime.now().strftime('%Y-%m-%d')+'%',)).fetchone()['c']
+    return {
+        'ok': True,
+        'version': RC3_9_VERSION,
+        'recent_logs': [dict(r) for r in recent],
+        'action_counts': [dict(r) for r in by_action],
+        'login_logs': [dict(r) for r in logins],
+        'failed_login_today': failed_today
+    }
+
+
+@app.get('/api/rc3-9/recommendation-audit')
+def rc39_recommendation_audit(limit: int = 100, authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    limit = max(10, min(int(limit or 100), 300))
+    with con() as c:
+        recent = c.execute('SELECT id,member_id,member_name,round_no,mode,count,avg_score,grade,created_at FROM recommendations ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        by_round = c.execute('SELECT round_no, COUNT(*) c, COALESCE(AVG(avg_score),0) avg_score, MAX(created_at) latest FROM recommendations GROUP BY round_no ORDER BY round_no DESC LIMIT 30').fetchall()
+        by_grade = c.execute('SELECT COALESCE(grade,"미분류") grade, COUNT(*) c FROM recommendations GROUP BY COALESCE(grade,"미분류") ORDER BY c DESC').fetchall()
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        today_count = c.execute('SELECT COUNT(*) c FROM recommendations WHERE created_at LIKE ?', (today+'%',)).fetchone()['c']
+    return {
+        'ok': True,
+        'version': RC3_9_VERSION,
+        'today_recommendations': today_count,
+        'recent': [dict(r) for r in recent],
+        'by_round': [dict(r) for r in by_round],
+        'by_grade': [dict(r) for r in by_grade]
+    }
+
+
+@app.get('/api/rc3-9/db-standard')
+def rc39_db_standard(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    return {
+        'ok': True,
+        'version': RC3_9_VERSION,
+        'primary_database': str(DB) if DB_ENGINE == 'sqlite' else 'DATABASE_URL(PostgreSQL)',
+        'db_engine': DB_ENGINE,
+        'rule': '운영 기준 DB는 bblotto_v34.db 또는 PostgreSQL DATABASE_URL 하나로 통일합니다. lotto.db는 과거 데이터/참조용으로만 유지합니다.',
+        'candidates': _rc39_database_candidates(),
+        'recommendation': 'Railway 운영에서는 PostgreSQL 연결을 유지하거나, SQLite를 쓸 경우 BBLOTTO_DB_DIR를 영구 볼륨 경로로 설정하세요.'
     }
