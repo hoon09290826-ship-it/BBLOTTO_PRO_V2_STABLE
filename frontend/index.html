@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>BBLOTTO PRO V2 RC4-3</title>
+  <title>BBLOTTO PRO V2 RC4-4</title>
   <link rel="stylesheet" href="/style.css?v=rc43-20260706">
 </head>
 <body class="dashboardBody"><div id="toast"></div>
-<div id="app" class="app"><aside><div class="brand">BBLOTTO<br><span>PRO V50</span><small>RC4-4 · ADMIN OPS</small></div><button class="nav active" data-tab="dashboard">대시보드</button><button class="nav" data-tab="generator">추천번호 생성</button><button class="nav" data-tab="members">회원 관리</button><button class="nav" data-tab="winning">당첨 확인</button><button class="nav" data-tab="stats">통계</button><button class="nav" data-tab="account">내 계정</button><button class="nav" data-tab="admin">관리자</button><button id="logout" class="logout">로그아웃</button></aside>
+<div id="app" class="app"><aside><div class="brand">BBLOTTO<br><span>PRO V50</span><small>RC4-4 · OWNER SCOPE</small></div><button class="nav active" data-tab="dashboard">대시보드</button><button class="nav" data-tab="generator">추천번호 생성</button><button class="nav" data-tab="members">회원 관리</button><button class="nav" data-tab="winning">당첨 확인</button><button class="nav" data-tab="stats">통계</button><button class="nav" data-tab="account">내 계정</button><button class="nav" data-tab="admin">관리자</button><button id="logout" class="logout">로그아웃</button></aside>
 <main><header><div><p class="eyebrow">BBLOTTO ADMIN SYSTEM</p><h2 id="pageTitle">대시보드</h2></div><div class="user">관리자: <b id="who">admin</b></div></header>
 <section id="dashboard" class="panel active">
   <div class="rc44-hero">
@@ -30,13 +30,14 @@
     <div class="stat"><b id="rc44TodayLogin">0</b><span>오늘 관리자 접속</span></div>
   </div>
   <div id="rc44Alerts" class="rc44-alerts hint"></div>
-  <div class="dashboard-grid rc44-grid-main">
-    <div class="box"><h3>관리자 대시보드</h3><div id="rc44Ops" class="rc44-panel-list hint">운영 정보를 불러오는 중입니다.</div></div>
-    <div class="box"><h3>AI 추천 현황</h3><p id="engineMini" class="hint">AI 엔진 상태를 불러오는 중입니다.</p><div id="rc44AiStatus" class="rc44-panel-list hint">AI 추천 현황을 불러오는 중입니다.</div></div>
-  </div>
-  <div class="dashboard-grid rc44-grid-main">
-    <div class="box"><h3>최근 생성번호</h3><div id="recentRecs" class="recent-list hint">최근 생성 이력이 여기에 표시됩니다.</div></div>
-    <div class="box"><h3>최근 관리자 활동</h3><div id="rc44Logs" class="recent-list hint">활동 로그가 여기에 표시됩니다.</div></div>
+  <div class="box rc44-simple-guide">
+    <h3>운영 메뉴</h3>
+    <p class="hint">대시보드는 핵심 현황만 표시합니다. 회원별 상세 관리는 왼쪽 메뉴의 회원 관리에서 진행하세요.</p>
+    <div class="btnrow wrap">
+      <button type="button" onclick="switchTab('members')">회원 관리로 이동</button>
+      <button type="button" onclick="switchTab('stats')">통계 확인</button>
+      <button type="button" onclick="switchTab('generator')">추천번호 생성</button>
+    </div>
   </div>
   <div id="rc44AutoResult" class="box rc44-auto-result hint" style="display:none"></div>
 </section>

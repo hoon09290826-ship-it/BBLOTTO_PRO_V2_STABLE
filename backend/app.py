@@ -686,6 +686,24 @@ def require_super_admin(admin):
     return admin
 
 
+def member_scope_condition(admin, table_alias: str = ''):
+    """RC4-4: 최고관리자는 전체 회원, 일반관리자는 본인이 등록한 회원만 조회/관리합니다."""
+    if is_super_admin(admin):
+        return '', []
+    prefix = (table_alias + '.') if table_alias else ''
+    return f'COALESCE({prefix}created_by,0)=?', [int(admin.get('id') or 0)]
+
+def assert_member_access(c, admin, member_id: int):
+    """회원 단건 작업 권한 확인."""
+    if is_super_admin(admin):
+        row = c.execute('SELECT id,name,created_by FROM members WHERE id=?', (member_id,)).fetchone()
+    else:
+        row = c.execute('SELECT id,name,created_by FROM members WHERE id=? AND COALESCE(created_by,0)=?', (member_id, int(admin.get('id') or 0))).fetchone()
+    if not row:
+        raise HTTPException(404, '관리 가능한 회원을 찾을 수 없습니다.')
+    return row
+
+
 # ===== PHASE19: 회차 자동 확인 / 속도 최적화 보조 =====
 LOTTO_FIRST_DRAW_DATE = datetime.date(2002, 12, 7)  # 1회 추첨일
 LOTTO_DRAW_WEEKDAY = 5  # Saturday
@@ -1950,8 +1968,11 @@ def backup_download(filename:str, token: str|None=None, authorization: str|None 
 
 @app.get('/api/members')
 def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:str='priority', limit:int=500, authorization: str|None = Header(default=None)):
-    require_admin(authorization)
+    admin=require_admin(authorization)
     wh=[]; args=[]
+    scope_sql, scope_args = member_scope_condition(admin)
+    if scope_sql:
+        wh.append(scope_sql); args += scope_args
     if q:
         wh.append('(name LIKE ? OR phone LIKE ? OR grade LIKE ? OR memo LIKE ? OR COALESCE(source,"") LIKE ? OR COALESCE(priority,"") LIKE ?)')
         like=f'%{q}%'
@@ -1983,27 +2004,32 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
 
 @app.get('/api/members_summary')
 def members_summary(authorization: str|None = Header(default=None)):
-    require_admin(authorization)
+    admin=require_admin(authorization)
+    scope_sql, scope_args = member_scope_condition(admin)
+    where = (' WHERE ' + scope_sql) if scope_sql else ''
     with con() as c:
-        total=c.execute('SELECT COUNT(*) c FROM members').fetchone()['c']
-        grade=c.execute('SELECT COALESCE(grade,"일반") label, COUNT(*) c FROM members GROUP BY COALESCE(grade,"일반")').fetchall()
-        status=c.execute('SELECT COALESCE(status,"활성") label, COUNT(*) c FROM members GROUP BY COALESCE(status,"활성")').fetchall()
-        priority=c.execute('SELECT COALESCE(priority,"보통") label, COUNT(*) c FROM members GROUP BY COALESCE(priority,"보통")').fetchall()
-        no_contact=c.execute('SELECT COUNT(*) c FROM members WHERE COALESCE(last_contact_at,"")=""').fetchone()['c']
-    return {'total':total,'grade':{r['label']:r['c'] for r in grade},'status':{r['label']:r['c'] for r in status},'priority':{r['label']:r['c'] for r in priority},'no_contact':no_contact}
+        total=c.execute('SELECT COUNT(*) c FROM members' + where, scope_args).fetchone()['c']
+        grade=c.execute('SELECT COALESCE(grade,"일반") label, COUNT(*) c FROM members' + where + ' GROUP BY COALESCE(grade,"일반")', scope_args).fetchall()
+        status=c.execute('SELECT COALESCE(status,"활성") label, COUNT(*) c FROM members' + where + ' GROUP BY COALESCE(status,"활성")', scope_args).fetchall()
+        priority=c.execute('SELECT COALESCE(priority,"보통") label, COUNT(*) c FROM members' + where + ' GROUP BY COALESCE(priority,"보통")', scope_args).fetchall()
+        no_contact=c.execute('SELECT COUNT(*) c FROM members' + (where + ' AND ' if where else ' WHERE ') + 'COALESCE(last_contact_at,"")=""', scope_args).fetchone()['c']
+    return {'total':total,'grade':{r['label']:r['c'] for r in grade},'status':{r['label']:r['c'] for r in status},'priority':{r['label']:r['c'] for r in priority},'no_contact':no_contact,'is_super_admin':is_super_admin(admin)}
 
 
 @app.get('/api/members_manage_overview')
 def members_manage_overview(authorization: str|None = Header(default=None)):
-    require_admin(authorization)
+    admin=require_admin(authorization)
+    scope_sql, scope_args = member_scope_condition(admin)
+    where = (' WHERE ' + scope_sql) if scope_sql else ''
     with con() as c:
-        total=c.execute('SELECT COUNT(*) c FROM members').fetchone()['c']
-        active=c.execute('SELECT COUNT(*) c FROM members WHERE COALESCE(status,"활성")="활성"').fetchone()['c']
-        paused=c.execute('SELECT COUNT(*) c FROM members WHERE COALESCE(status,"활성") IN ("휴면","정지")').fetchone()['c']
-        closed=c.execute('SELECT COUNT(*) c FROM members WHERE COALESCE(status,"활성") IN ("종료","탈퇴")').fetchone()['c']
-        recent=c.execute('SELECT id,name,phone,grade,status,priority,created_at,updated_at FROM members ORDER BY id DESC LIMIT 10').fetchall()
-        status_rows=c.execute('SELECT COALESCE(status,"활성") label, COUNT(*) c FROM members GROUP BY COALESCE(status,"활성")').fetchall()
-    return {'total':total,'active':active,'paused':paused,'closed':closed,'status_counts':{r['label']:r['c'] for r in status_rows},'recent':[dict(r) for r in recent]}
+        total=c.execute('SELECT COUNT(*) c FROM members' + where, scope_args).fetchone()['c']
+        active=c.execute('SELECT COUNT(*) c FROM members' + (where + ' AND ' if where else ' WHERE ') + 'COALESCE(status,"활성")="활성"', scope_args).fetchone()['c']
+        paused=c.execute('SELECT COUNT(*) c FROM members' + (where + ' AND ' if where else ' WHERE ') + 'COALESCE(status,"활성") IN ("휴면","정지")', scope_args).fetchone()['c']
+        closed=c.execute('SELECT COUNT(*) c FROM members' + (where + ' AND ' if where else ' WHERE ') + 'COALESCE(status,"활성") IN ("종료","탈퇴")', scope_args).fetchone()['c']
+        recent=c.execute('SELECT id,name,phone,grade,status,priority,created_at,updated_at FROM members' + where + ' ORDER BY id DESC LIMIT 10', scope_args).fetchall()
+        status_rows=c.execute('SELECT COALESCE(status,"활성") label, COUNT(*) c FROM members' + where + ' GROUP BY COALESCE(status,"활성")', scope_args).fetchall()
+    return {'total':total,'active':active,'paused':paused,'closed':closed,'status_counts':{r['label']:r['c'] for r in status_rows},'recent':[dict(r) for r in recent],'is_super_admin':is_super_admin(admin)}
+
 
 @app.post('/api/members/{member_id}/status')
 def change_member_status(member_id:int, req:MemberStatusReq, request:Request, authorization: str|None = Header(default=None)):
@@ -2012,8 +2038,8 @@ def change_member_status(member_id:int, req:MemberStatusReq, request:Request, au
     if req.status not in allowed:
         raise HTTPException(400, '허용되지 않은 회원 상태입니다.')
     with con() as c:
+        m=assert_member_access(c, admin, member_id)
         m=c.execute('SELECT id,name,status,memo FROM members WHERE id=?',(member_id,)).fetchone()
-        if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
         memo = m['memo'] if req.memo is None else req.memo
         c.execute('UPDATE members SET status=?, memo=?, updated_at=? WHERE id=?',(req.status,memo,now(),member_id))
         c.commit()
@@ -2030,8 +2056,13 @@ def bulk_member_status(req:MemberBulkStatusReq, request:Request, authorization: 
     if not ids: raise HTTPException(400,'변경할 회원을 선택하세요.')
     placeholders=','.join(['?']*len(ids))
     with con() as c:
-        rows=c.execute(f'SELECT id,name,status FROM members WHERE id IN ({placeholders})', ids).fetchall()
-        c.execute(f'UPDATE members SET status=?, updated_at=? WHERE id IN ({placeholders})', [req.status, now(), *ids])
+        scope_sql, scope_args = member_scope_condition(admin)
+        scope_tail = (' AND ' + scope_sql) if scope_sql else ''
+        rows=c.execute(f'SELECT id,name,status FROM members WHERE id IN ({placeholders}){scope_tail}', [*ids, *scope_args]).fetchall()
+        allowed_ids=[int(r['id']) for r in rows]
+        if allowed_ids:
+            ph=','.join(['?']*len(allowed_ids))
+            c.execute(f'UPDATE members SET status=?, updated_at=? WHERE id IN ({ph})', [req.status, now(), *allowed_ids])
         c.commit()
     log_action(admin,'BULK_MEMBER_STATUS',f'회원 {len(rows)}명 상태 일괄 변경 -> {req.status}',request)
     return {'ok':True,'changed':len(rows),'status':req.status}
@@ -2047,13 +2078,16 @@ def add_member(req:MemberReq, request:Request, authorization: str|None = Header(
 @app.delete('/api/members/{member_id}')
 def del_member(member_id:int, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
-    with con() as c: c.execute('DELETE FROM members WHERE id=?',(member_id,)); c.commit()
+    with con() as c:
+        assert_member_access(c, admin, member_id)
+        c.execute('DELETE FROM members WHERE id=?',(member_id,)); c.commit()
     log_action(admin,'DELETE_MEMBER',f'회원 삭제 ID {member_id}',request); return {'ok':True}
 
 @app.put('/api/members/{member_id}')
 def update_member(member_id:int, req:MemberReq, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     with con() as c:
+        assert_member_access(c, admin, member_id)
         c.execute('UPDATE members SET name=?, phone=?, grade=?, memo=?, status=?, priority=?, source=?, updated_at=? WHERE id=?', (req.name, req.phone, req.grade, req.memo, req.status, req.priority, req.source, now(), member_id))
         c.commit()
     log_action(admin,'UPDATE_MEMBER',f'회원 수정 ID {member_id}: {req.name}',request)
@@ -2061,10 +2095,10 @@ def update_member(member_id:int, req:MemberReq, request:Request, authorization: 
 
 @app.get('/api/members/{member_id}/detail')
 def member_detail(member_id:int, authorization: str|None = Header(default=None)):
-    require_admin(authorization)
+    admin=require_admin(authorization)
     with con() as c:
+        assert_member_access(c, admin, member_id)
         m=c.execute('SELECT * FROM members WHERE id=?',(member_id,)).fetchone()
-        if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
         recs=c.execute('SELECT id,round_no,mode,count,numbers,analysis,avg_score,created_at FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         sms=c.execute('SELECT id,round_no,body,status,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         wins=c.execute('SELECT round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_at FROM winning_checks WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
@@ -2110,8 +2144,7 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
 def update_member_memo(member_id:int, req:MemberMemoReq, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     with con() as c:
-        m=c.execute('SELECT id,name FROM members WHERE id=?',(member_id,)).fetchone()
-        if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
+        m=assert_member_access(c, admin, member_id)
         c.execute('UPDATE members SET memo=?, updated_at=? WHERE id=?',(req.memo, now(), member_id))
         c.commit()
     log_action(admin,'UPDATE_MEMBER_MEMO',f'회원 메모 수정: {m["name"]}',request)
@@ -2124,8 +2157,7 @@ def add_member_note(member_id:int, req:MemberNoteReq, request:Request, authoriza
     if not note: raise HTTPException(400,'상담 내용을 입력하세요.')
     note_type=(req.note_type or '상담').strip()[:20]
     with con() as c:
-        m=c.execute('SELECT id,name FROM members WHERE id=?',(member_id,)).fetchone()
-        if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
+        m=assert_member_access(c, admin, member_id)
         c.execute('INSERT INTO member_notes(member_id,note,note_type,created_by,created_by_name,created_at) VALUES(?,?,?,?,?,?)',(member_id,note,note_type,admin['id'],admin.get('name') or admin.get('username') or '',now()))
         c.execute('UPDATE members SET last_contact_at=?, updated_at=? WHERE id=?',(now(),now(),member_id))
         c.commit()
@@ -4064,15 +4096,20 @@ def _rc44_today_like():
 
 @app.get('/api/rc4-4/admin-dashboard')
 def rc44_admin_dashboard(authorization: str|None = Header(default=None)):
-    require_admin(authorization)
+    admin=require_admin(authorization)
     today = _rc44_today_like()
     with con() as c:
-        total_members = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM members')
-        active_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members WHERE COALESCE(status,'활성')='활성'")
-        vip_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members WHERE COALESCE(grade,'일반') IN ('VIP','다이아','프리미엄')")
-        priority_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members WHERE COALESCE(priority,'보통') IN ('높음','최우선')")
-        rec_total = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations')
-        rec_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations WHERE created_at LIKE ?', (today,))
+        scope_sql, scope_args = member_scope_condition(admin, 'm')
+        mem_where = (' WHERE ' + scope_sql.replace('m.', '')) if scope_sql else ''
+        rec_join = ' LEFT JOIN members m ON m.id=r.member_id'
+        rec_scope = (' AND ' + scope_sql) if scope_sql else ''
+        rec_scope_where = (' WHERE ' + scope_sql) if scope_sql else ''
+        total_members = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM members' + mem_where, scope_args)
+        active_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(status,'활성')='활성'", scope_args)
+        vip_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(grade,'일반') IN ('VIP','다이아','프리미엄')", scope_args)
+        priority_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(priority,'보통') IN ('높음','최우선')", scope_args)
+        rec_total = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations r' + rec_join + rec_scope_where, scope_args)
+        rec_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations r' + rec_join + ' WHERE r.created_at LIKE ?' + rec_scope, (today, *scope_args))
         sms_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM sms_logs WHERE created_at LIKE ?', (today,))
         wins_today = _rc44_safe_count(c, "SELECT COUNT(*) c FROM winning_checks WHERE created_at LIKE ? AND COALESCE(rank,'낙첨')<>'낙첨'", (today,))
         login_today = _rc44_safe_count(c, "SELECT COUNT(*) c FROM admin_logs WHERE action IN ('LOGIN','LOGIN_SUCCESS') AND created_at LIKE ?", (today,))
@@ -4080,10 +4117,10 @@ def rc44_admin_dashboard(authorization: str|None = Header(default=None)):
         latest_draw = c.execute('SELECT round_no,draw_date,numbers,bonus FROM draws ORDER BY round_no DESC LIMIT 1').fetchone()
         avg = c.execute('SELECT COALESCE(AVG(avg_score),0) a, COALESCE(MAX(avg_score),0) m FROM recommendations WHERE avg_score IS NOT NULL').fetchone()
         prize_row = c.execute('SELECT COALESCE(SUM(prize),0) prize, COUNT(*) c FROM winning_checks').fetchone()
-        recent_members = _rc44_rows(c, 'SELECT id,name,phone,grade,status,priority,created_at FROM members ORDER BY id DESC LIMIT 8')
+        recent_members = _rc44_rows(c, 'SELECT id,name,phone,grade,status,priority,created_at FROM members' + mem_where + ' ORDER BY id DESC LIMIT 8', scope_args)
         recent_logs = _rc44_rows(c, 'SELECT username,action,detail,created_at FROM admin_logs ORDER BY id DESC LIMIT 10')
-        recent_recs = _rc44_rows(c, 'SELECT id,member_id,member_name,round_no,mode,count,avg_score,created_at FROM recommendations ORDER BY id DESC LIMIT 10')
-        recent_wins = _rc44_rows(c, "SELECT member_name,round_no,rank,prize,created_at FROM winning_checks WHERE COALESCE(rank,'낙첨')<>'낙첨' ORDER BY id DESC LIMIT 8")
+        recent_recs = _rc44_rows(c, 'SELECT r.id,r.member_id,r.member_name,r.round_no,r.mode,r.count,r.avg_score,r.created_at FROM recommendations r' + rec_join + rec_scope_where + ' ORDER BY r.id DESC LIMIT 10', scope_args)
+        recent_wins = _rc44_rows(c, "SELECT w.member_name,w.round_no,w.rank,w.prize,w.created_at FROM winning_checks w LEFT JOIN members m ON m.id=w.member_id WHERE COALESCE(w.rank,'낙첨')<>'낙첨'" + rec_scope + ' ORDER BY w.id DESC LIMIT 8', scope_args)
     alerts=[]
     if not latest_draw:
         alerts.append({'type':'warning','message':'저장된 당첨번호가 없습니다. 자동 업데이트를 실행하세요.'})

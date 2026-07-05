@@ -412,7 +412,7 @@ async function loadRc44AiStatus(){
   box.innerHTML=`<h4>모드별 추천</h4>${rc44Rows(modeRows,'모드별 데이터 없음')}<h4>오늘 생성 로그</h4>${rc44Rows(todayRows,'오늘 생성 이력 없음')}`;
 }
 async function loadDashboard(){
-  try{ await loadRc44Dashboard(); await loadRc44AiStatus(); }
+  try{ await loadRc44Dashboard(); }
   catch(e){
     console.warn('RC4-4 대시보드 실패, 기본 대시보드 사용', e);
     let d; try{ d=await api('/api/dashboard_v2'); }catch(_){ d=await api('/api/dashboard_summary'); }
