@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC4-3')
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC4-4')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
 RC3_9_VERSION = 'V2_STABLE_RC3_15'
 RC3_10_VERSION = 'V2_STABLE_RC3_15'
@@ -2067,38 +2067,7 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
         if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
         recs=c.execute('SELECT id,round_no,mode,count,numbers,analysis,avg_score,created_at FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         sms=c.execute('SELECT id,round_no,body,status,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
-        # RC4-3 FIX: 회원 상세 당첨이력은 실제 당첨번호(draws)가 저장된 회차만 표시합니다.
-        # 예: 아직 추첨/저장되지 않은 1232회 추천 또는 과거 테스트 확인값이 회원 상세에 노출되지 않도록
-        # winning_checks를 draws와 직접 연동하고, 화면에는 draws 기준 당첨번호/보너스를 사용합니다.
-        wins=c.execute('''
-            SELECT
-                wc.round_no,
-                wc.target_numbers,
-                d.numbers AS win_numbers,
-                d.bonus AS bonus,
-                wc.match_count,
-                wc.bonus_match,
-                wc.rank,
-                wc.prize,
-                wc.cost,
-                wc.profit,
-                wc.roi,
-                COALESCE(d.draw_date, '') AS draw_date,
-                wc.created_at
-            FROM winning_checks wc
-            INNER JOIN draws d ON d.round_no = wc.round_no
-            WHERE wc.member_id=?
-              AND COALESCE(TRIM(d.numbers),'') NOT IN ('', '[]', 'null')
-              AND COALESCE(d.bonus,0) BETWEEN 1 AND 45
-              -- RC4-3 METHOD/FIX: 실제 공식 당첨일(YYYY-MM-DD / YYYY.MM.DD)만 인정
-              -- 2026-07-06 01:14:51 처럼 생성시간이 draw_date로 들어간 임시 회차는 제외
-              AND length(TRIM(COALESCE(d.draw_date,''))) = 10
-              AND substr(TRIM(COALESCE(d.draw_date,'')),5,1) IN ('-', '.')
-              AND substr(TRIM(COALESCE(d.draw_date,'')),8,1) IN ('-', '.')
-              AND date(REPLACE(TRIM(COALESCE(d.draw_date,'')),'.','-')) <= CURRENT_DATE
-            ORDER BY wc.round_no DESC, wc.id DESC
-            LIMIT 200
-        ''',(member_id,)).fetchall()
+        wins=c.execute('SELECT round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_at FROM winning_checks WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         notes=c.execute('SELECT id,note,note_type,created_by_name,created_at FROM member_notes WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
     rec_list=[]
     for r in recs:
@@ -2544,7 +2513,7 @@ def api_stats(limit:int=100, authorization: str|None = Header(default=None)):
     for d in draws:
         for a,b in itertools.combinations(d['numbers'],2):
             pair_counter[(a,b)]+=1
-    return {'count':len(draws),'limit':limit,'latest':draws[0] if draws else None,'recent_draws':draws[:100],'hot':st['hot'],'cold':st['cold'],'missing20':st['overdue'],'odd':odd,'even':even,'sections':sections,'sum_min':min(sums) if sums else 0,'sum_avg':round(sum(sums)/len(sums),1) if sums else 0,'sum_max':max(sums) if sums else 0,'top_pairs':[{'pair':list(k),'count':v} for k,v in pair_counter.most_common(15)]}
+    return {'count':len(draws),'limit':limit,'latest':draws[0] if draws else None,'recent_draws':draws[:100],'hot':st['hot'],'cold':st['cold'],'missing20':st['overdue'],'odd':odd,'even':even,'sections':sections,'sum_min':min(sums) if sums else 0,'sum_avg':round(sum(sums)/len(sums),1) if sums else 0,'sum_max':max(sums) if sums else 0,'top_pairs':[{'pair':list(k),'count':v} for k,v in pair_counter.most_common(15)], 'freq': st.get('freq',{}), 'freq100': st.get('freq100',{})}
 
 def csv_response(filename, headers, rows):
     bio=io.StringIO()
@@ -4070,6 +4039,131 @@ def backfill_engine_runs(authorization: str|None = Header(default=None)):
             inserted+=1
         c.commit()
     return {'ok':True,'inserted':inserted}
+
+
+
+
+# ===== RC4-4: Admin / Stats / AI / Members / Auto Update =====
+RC4_4_VERSION = 'V2_STABLE_RC4_4_ADMIN_DASHBOARD'
+
+def _rc44_safe_count(c, sql, params=()):
+    try:
+        r = c.execute(sql, params).fetchone()
+        return int((r['c'] if r and 'c' in r.keys() else r[0]) or 0)
+    except Exception:
+        return 0
+
+def _rc44_rows(c, sql, params=(), limit=20):
+    try:
+        return [dict(r) for r in c.execute(sql, params).fetchall()[:limit]]
+    except Exception:
+        return []
+
+def _rc44_today_like():
+    return datetime.datetime.now().strftime('%Y-%m-%d') + '%'
+
+@app.get('/api/rc4-4/admin-dashboard')
+def rc44_admin_dashboard(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    today = _rc44_today_like()
+    with con() as c:
+        total_members = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM members')
+        active_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members WHERE COALESCE(status,'활성')='활성'")
+        vip_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members WHERE COALESCE(grade,'일반') IN ('VIP','다이아','프리미엄')")
+        priority_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members WHERE COALESCE(priority,'보통') IN ('높음','최우선')")
+        rec_total = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations')
+        rec_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations WHERE created_at LIKE ?', (today,))
+        sms_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM sms_logs WHERE created_at LIKE ?', (today,))
+        wins_today = _rc44_safe_count(c, "SELECT COUNT(*) c FROM winning_checks WHERE created_at LIKE ? AND COALESCE(rank,'낙첨')<>'낙첨'", (today,))
+        login_today = _rc44_safe_count(c, "SELECT COUNT(*) c FROM admin_logs WHERE action IN ('LOGIN','LOGIN_SUCCESS') AND created_at LIKE ?", (today,))
+        activity_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM admin_logs WHERE created_at LIKE ?', (today,))
+        latest_draw = c.execute('SELECT round_no,draw_date,numbers,bonus FROM draws ORDER BY round_no DESC LIMIT 1').fetchone()
+        avg = c.execute('SELECT COALESCE(AVG(avg_score),0) a, COALESCE(MAX(avg_score),0) m FROM recommendations WHERE avg_score IS NOT NULL').fetchone()
+        prize_row = c.execute('SELECT COALESCE(SUM(prize),0) prize, COUNT(*) c FROM winning_checks').fetchone()
+        recent_members = _rc44_rows(c, 'SELECT id,name,phone,grade,status,priority,created_at FROM members ORDER BY id DESC LIMIT 8')
+        recent_logs = _rc44_rows(c, 'SELECT username,action,detail,created_at FROM admin_logs ORDER BY id DESC LIMIT 10')
+        recent_recs = _rc44_rows(c, 'SELECT id,member_id,member_name,round_no,mode,count,avg_score,created_at FROM recommendations ORDER BY id DESC LIMIT 10')
+        recent_wins = _rc44_rows(c, "SELECT member_name,round_no,rank,prize,created_at FROM winning_checks WHERE COALESCE(rank,'낙첨')<>'낙첨' ORDER BY id DESC LIMIT 8")
+    alerts=[]
+    if not latest_draw:
+        alerts.append({'type':'warning','message':'저장된 당첨번호가 없습니다. 자동 업데이트를 실행하세요.'})
+    else:
+        alerts.append({'type':'success','message':f"최근 저장 회차 {latest_draw['round_no']}회 기준으로 운영 중입니다."})
+    if rec_today:
+        alerts.append({'type':'info','message':f'오늘 추천번호 {rec_today}건 생성되었습니다.'})
+    if wins_today:
+        alerts.append({'type':'success','message':f'오늘 적중 결과 {wins_today}건이 확인되었습니다.'})
+    return {
+        'ok': True, 'version': RC4_4_VERSION,
+        'kpi': {
+            'total_members': total_members, 'active_members': active_members, 'vip_members': vip_members,
+            'priority_members': priority_members, 'recommendations_total': rec_total, 'recommendations_today': rec_today,
+            'sms_today': sms_today, 'wins_today': wins_today, 'login_today': login_today, 'activity_today': activity_today,
+            'avg_ai_score': round(float(avg['a'] or 0),1) if avg else 0, 'max_ai_score': round(float(avg['m'] or 0),1) if avg else 0,
+            'total_prize': int(prize_row['prize'] or 0) if prize_row else 0, 'checked_total': int(prize_row['c'] or 0) if prize_row else 0
+        },
+        'latest_draw': dict(latest_draw) if latest_draw else None,
+        'recent_members': recent_members, 'recent_logs': recent_logs, 'recent_recommendations': recent_recs,
+        'recent_wins': recent_wins, 'alerts': alerts
+    }
+
+@app.get('/api/rc4-4/ai-status')
+def rc44_ai_status(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    today = _rc44_today_like()
+    with con() as c:
+        by_grade = _rc44_rows(c, """SELECT COALESCE(m.grade,'일반') grade, COUNT(r.id) c, COALESCE(AVG(r.avg_score),0) avg_score
+                                     FROM recommendations r LEFT JOIN members m ON m.id=r.member_id
+                                     GROUP BY COALESCE(m.grade,'일반') ORDER BY c DESC""", limit=20)
+        by_mode = _rc44_rows(c, "SELECT COALESCE(mode,'balanced') mode, COUNT(*) c, COALESCE(AVG(avg_score),0) avg_score FROM recommendations GROUP BY COALESCE(mode,'balanced') ORDER BY c DESC", limit=20)
+        today_rows = _rc44_rows(c, "SELECT id,member_name,round_no,mode,count,avg_score,created_at FROM recommendations WHERE created_at LIKE ? ORDER BY id DESC LIMIT 20", (today,), limit=20)
+        recent_runs = _rc44_rows(c, 'SELECT recommendation_id,round_no,mode,count,avg_score,engine_version,created_at FROM engine_runs ORDER BY id DESC LIMIT 20', limit=20)
+    return {'ok': True, 'version': RC4_4_VERSION, 'by_grade': by_grade, 'by_mode': by_mode, 'today': today_rows, 'recent_runs': recent_runs}
+
+@app.get('/api/rc4-4/member-dashboard')
+def rc44_member_dashboard(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    with con() as c:
+        grade = _rc44_rows(c, "SELECT COALESCE(grade,'일반') label, COUNT(*) c FROM members GROUP BY COALESCE(grade,'일반') ORDER BY c DESC", limit=20)
+        status = _rc44_rows(c, "SELECT COALESCE(status,'활성') label, COUNT(*) c FROM members GROUP BY COALESCE(status,'활성') ORDER BY c DESC", limit=20)
+        priority = _rc44_rows(c, "SELECT COALESCE(priority,'보통') label, COUNT(*) c FROM members GROUP BY COALESCE(priority,'보통') ORDER BY c DESC", limit=20)
+        top = _rc44_rows(c, """SELECT m.id,m.name,m.grade,m.status,m.priority,COUNT(r.id) rec_count,COALESCE(MAX(r.created_at),'') latest_recommendation
+                              FROM members m LEFT JOIN recommendations r ON r.member_id=m.id
+                              GROUP BY m.id,m.name,m.grade,m.status,m.priority
+                              ORDER BY rec_count DESC, m.id DESC LIMIT 10""", limit=10)
+    return {'ok': True, 'version': RC4_4_VERSION, 'grade': grade, 'status': status, 'priority': priority, 'top_members': top}
+
+@app.post('/api/rc4-4/auto-update')
+def rc44_auto_update(backfill:int=12, request:Request=None, authorization: str|None = Header(default=None)):
+    admin = require_admin(authorization)
+    result = {'ok': True, 'version': RC4_4_VERSION, 'steps': []}
+    try:
+        sync = _s3_sync_recent_draws(backfill)
+        result['steps'].append({'name':'최신회차 동기화','ok':True,'data':sync})
+    except Exception as e:
+        result['steps'].append({'name':'최신회차 동기화','ok':False,'error':str(e)[:180]})
+    try:
+        st = latest_stats(100)
+        result['steps'].append({'name':'최근 100회 통계 갱신','ok':True,'latest_round':st.get('latest_round'),'sample_size':len(st.get('draws',[]) or [])})
+    except Exception as e:
+        result['steps'].append({'name':'최근 100회 통계 갱신','ok':False,'error':str(e)[:180]})
+    try:
+        with con() as c:
+            latest = c.execute('SELECT round_no FROM draws ORDER BY round_no DESC LIMIT 1').fetchone()
+        if latest:
+            auto = _auto_check_round(admin, AutoWinReq(round_no=int(latest['round_no'])), request)
+            result['steps'].append({'name':'회원 적중 자동계산','ok':True,'data':auto})
+        else:
+            result['steps'].append({'name':'회원 적중 자동계산','ok':False,'error':'저장된 회차 없음'})
+    except Exception as e:
+        result['steps'].append({'name':'회원 적중 자동계산','ok':False,'error':str(e)[:180]})
+    try:
+        log_action(admin, 'RC4_4_AUTO_UPDATE', json.dumps(result, ensure_ascii=False), request)
+    except Exception:
+        pass
+    result['success_count'] = sum(1 for s in result['steps'] if s.get('ok'))
+    result['failed_count'] = sum(1 for s in result['steps'] if not s.get('ok'))
+    return result
 
 
 # ===== RC2 Sprint 3: draw automation / 100-round stats / mobile status =====

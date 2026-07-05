@@ -381,10 +381,55 @@ async function loadMembers(){
   setText('memberVip', membersCache.filter(m=>['VIP','다이아','프리미엄'].includes(m.grade)).length);
   setText('memberPriority', membersCache.filter(m=>(m.priority||'').includes('높') || (m.priority||'').includes('최')).length);
 }
+function rc44Money(v){ return Number(v||0).toLocaleString() + '원'; }
+function rc44Rows(items, empty){
+  if(!Array.isArray(items) || !items.length) return `<div class="empty-detail">${esc(empty||'데이터가 없습니다.')}</div>`;
+  return items.map(x=>`<div class="rc44-row"><div><b>${esc(x.title||x.name||x.member_name||x.username||'-')}</b><small>${esc(x.sub||x.detail||x.created_at||'')}</small></div><strong>${esc(x.value||x.action||x.rank||'')}</strong></div>`).join('');
+}
+async function loadRc44Dashboard(){
+  const d = await api('/api/rc4-4/admin-dashboard');
+  const k = d.kpi || {};
+  setText('memberCount', k.total_members ?? 0);
+  setText('latestRound', d.latest_draw?.round_no ?? '-');
+  setText('recCount', k.recommendations_total ?? 0);
+  setText('smsCount', k.sms_today ?? 0);
+  setText('rc44TodayRec', k.recommendations_today ?? 0);
+  setText('rc44TodayLogin', k.login_today ?? 0);
+  const sub=$('rc44AdminSub'); if(sub) sub.textContent=`활성 ${k.active_members||0}명 · VIP/프리미엄 ${k.vip_members||0}명 · 우선관리 ${k.priority_members||0}명 · 총 당첨금 ${rc44Money(k.total_prize||0)}`;
+  const alerts=$('rc44Alerts'); if(alerts) alerts.innerHTML=(d.alerts||[]).map(a=>`<div class="rc44-alert ${esc(a.type||'')}">${esc(a.message||'')}</div>`).join('');
+  const ops=$('rc44Ops'); if(ops) ops.innerHTML=`<div class="rc44-mini-grid"><div class="rc44-mini"><b>${k.activity_today||0}</b><span>오늘 활동</span></div><div class="rc44-mini"><b>${k.wins_today||0}</b><span>오늘 적중</span></div><div class="rc44-mini"><b>${k.max_ai_score||0}</b><span>최고 AI점수</span></div></div>` + rc44Rows((d.recent_members||[]).map(m=>({title:m.name, sub:`${m.grade||'일반'} · ${m.status||'활성'} · ${m.priority||'보통'}`, value:m.created_at||''})), '최근 가입 회원이 없습니다.');
+  const recent=$('recentRecs'); if(recent) recent.innerHTML=rc44Rows((d.recent_recommendations||[]).map(r=>({title:`${r.round_no||'-'}회 · ${r.member_name||'회원'}`, sub:`${r.mode||'balanced'} · ${r.count||0}조합 · ${r.created_at||''}`, value:`AI ${Number(r.avg_score||0).toFixed(1)}`})), '최근 생성 이력이 없습니다.');
+  const logs=$('rc44Logs'); if(logs) logs.innerHTML=rc44Rows((d.recent_logs||[]).map(l=>({title:l.username||'admin', sub:l.detail||l.created_at||'', value:l.action||''})), '최근 관리자 활동이 없습니다.');
+}
+async function loadRc44AiStatus(){
+  const d = await api('/api/rc4-4/ai-status');
+  const engineMini=$('engineMini');
+  const total=(d.today||[]).reduce((a,r)=>a+Number(r.count||0),0);
+  if(engineMini) engineMini.textContent=`RC4-4 AI 추천 현황 · 오늘 ${d.today?.length||0}건 / ${total}조합`;
+  const box=$('rc44AiStatus'); if(!box) return;
+  const modeRows=(d.by_mode||[]).map(r=>({title:r.mode||'balanced', sub:`평균 AI ${Number(r.avg_score||0).toFixed(1)}점`, value:`${r.c||0}건`}));
+  const todayRows=(d.today||[]).slice(0,6).map(r=>({title:`${r.round_no||'-'}회 · ${r.member_name||'회원'}`, sub:`${r.mode||'balanced'} · ${r.count||0}조합 · ${r.created_at||''}`, value:`${Number(r.avg_score||0).toFixed(1)}점`}));
+  box.innerHTML=`<h4>모드별 추천</h4>${rc44Rows(modeRows,'모드별 데이터 없음')}<h4>오늘 생성 로그</h4>${rc44Rows(todayRows,'오늘 생성 이력 없음')}`;
+}
 async function loadDashboard(){
-  let d; try{ d=await api('/api/dashboard_v2'); }catch(e){ d=await api('/api/dashboard_summary'); }
-  setText('memberCount', d.members ?? 0); setText('latestRound', d.latest_round ?? '-'); setText('recCount', d.recommendations ?? 0); setText('smsCount', d.sms ?? 0); const engineMini=$('engineMini'); if(engineMini) engineMini.textContent=`${d.engine_version||'AI'} · 평균 ${d.avg_ai_score||0}점 · 오늘 ${d.today_recommendations||0}건`; 
-  const recent=$('recentRecs'); if(recent) recent.innerHTML=(d.recent_recommendations||[]).map(r=>`<p>${r.round_no}회 · ${esc(r.member_name||'회원')} · ${esc(r.created_at||'')}</p>`).join('') || '최근 생성 이력이 없습니다.';
+  try{ await loadRc44Dashboard(); await loadRc44AiStatus(); }
+  catch(e){
+    console.warn('RC4-4 대시보드 실패, 기본 대시보드 사용', e);
+    let d; try{ d=await api('/api/dashboard_v2'); }catch(_){ d=await api('/api/dashboard_summary'); }
+    setText('memberCount', d.members ?? 0); setText('latestRound', d.latest_round ?? '-'); setText('recCount', d.recommendations ?? 0); setText('smsCount', d.sms ?? 0);
+    const engineMini=$('engineMini'); if(engineMini) engineMini.textContent=`${d.engine_version||'AI'} · 평균 ${d.avg_ai_score||0}점 · 오늘 ${d.today_recommendations||0}건`;
+    const recent=$('recentRecs'); if(recent) recent.innerHTML=(d.recent_recommendations||[]).map(r=>`<p>${r.round_no}회 · ${esc(r.member_name||'회원')} · ${esc(r.created_at||'')}</p>`).join('') || '최근 생성 이력이 없습니다.';
+  }
+}
+async function rc44RunAutoUpdate(){
+  if(!confirm('최신회차 조회, 통계 갱신, 회원 적중 계산을 실행할까요?')) return;
+  const box=$('rc44AutoResult'); if(box){ box.style.display='block'; box.innerHTML='자동 업데이트 실행 중입니다...'; }
+  try{
+    const d=await api('/api/rc4-4/auto-update?backfill=12',{method:'POST'});
+    if(box) box.innerHTML=`<h3>자동 업데이트 결과</h3>${(d.steps||[]).map(s=>`<div class="rc44-step"><b>${esc(s.name)}</b><span class="${s.ok?'ok':'fail'}">${s.ok?'완료':'실패'}</span></div>`).join('')}<p class="hint">성공 ${d.success_count||0}건 / 실패 ${d.failed_count||0}건</p>`;
+    await Promise.allSettled([loadDashboard(), loadStats(100), loadDraws(), loadMembers()]);
+    toast('RC4-4 자동 업데이트가 완료되었습니다.');
+  }catch(e){ if(box) box.innerHTML=`<b>자동 업데이트 실패</b><p>${esc(e.message||e)}</p>`; }
 }
 async function loadTemplate(){
   let text = '';
@@ -399,20 +444,26 @@ function renderStats(d){
   if(!d || !d.count){ box.innerHTML='<div class="hint">저장된 당첨번호가 없어서 통계를 만들 수 없습니다. 당첨번호를 먼저 저장하세요.</div>'; return; }
   const hot=(d.hot||[]).map(n=>`<span class="ball ${ballClass(n)}">${n}</span>`).join('');
   const cold=(d.cold||[]).map(n=>`<span class="ball ${ballClass(n)}">${n}</span>`).join('');
-  const miss=(d.missing20||[]).map(n=>`<span class="ball ${ballClass(n)}">${n}</span>`).join('');
-  const pairs=(d.top_pairs||[]).map(p=>`<span class="mini-chip">${p.pair.join('-')} · ${p.count}회</span>`).join('');
+  const miss=(d.missing20||d.overdue||[]).map(n=>`<span class="ball ${ballClass(n)}">${n}</span>`).join('');
+  const pairs=(d.top_pairs||[]).map(p=>`<span class="mini-chip">${(p.pair||[]).join('-')} · ${p.count}회</span>`).join('');
   const recent=(d.recent_draws||[]).slice(0,100).map(r=>`<div class="draw-row"><b>${r.round_no}회</b><span>${(r.numbers||[]).join(', ')} + ${r.bonus||''}</span><small>${r.draw_date||''}</small></div>`).join('');
-  box.innerHTML=`<div class="stat-grid">
-    <div class="stat-card"><b>${d.count}</b><span>분석 회차</span></div>
-    <div class="stat-card"><b>${d.sum_avg}</b><span>평균 합계</span></div>
-    <div class="stat-card"><b>${d.odd}:${d.even}</b><span>홀짝 누적</span></div>
-    <div class="stat-card"><b>${(d.sections||[]).join(' / ')}</b><span>구간 1~15 / 16~30 / 31~45</span></div>
-  </div>
-  <h4>많이 나온 번호</h4><div class="nums-line">${hot}</div>
-  <h4>적게 나온 번호</h4><div class="nums-line">${cold}</div>
-  <h4>미출현/공백 번호</h4><div class="nums-line">${miss}</div>
-  <h4>동반출현 TOP</h4><div class="pair-line">${pairs||'데이터 없음'}</div>
-  <h4>최근 회차 ${Math.min(100,(d.recent_draws||[]).length)}개</h4><div class="recent-draws-100">${recent||'최근 회차 데이터 없음'}</div>`;
+  const freq=d.freq || d.freq100 || {};
+  const maxFreq=Math.max(1, ...Object.values(freq).map(Number));
+  const bars=Object.entries(freq).sort((a,b)=>Number(b[1])-Number(a[1])).slice(0,15).map(([n,c])=>`<div class="stats-bar"><b>${n}</b><div><i style="width:${Math.round(Number(c)/maxFreq*100)}%"></i></div><span>${c}회</span></div>`).join('');
+  box.innerHTML=`<div class="stats-dashboard">
+    <div class="stats-kpi">
+      <div class="stat-card"><b>${d.count}</b><span>분석 회차</span></div>
+      <div class="stat-card"><b>${d.sum_avg}</b><span>평균 합계</span></div>
+      <div class="stat-card"><b>${d.odd}:${d.even}</b><span>홀짝 누적</span></div>
+      <div class="stat-card"><b>${(d.sections||[]).join(' / ')}</b><span>구간 1~15 / 16~30 / 31~45</span></div>
+    </div>
+    <div class="stats-panels">
+      <div class="detail-section"><h4>HOT 번호</h4><div class="nums-line">${hot}</div><h4>COLD 번호</h4><div class="nums-line">${cold}</div><h4>미출현/공백 번호</h4><div class="nums-line">${miss}</div></div>
+      <div class="detail-section"><h4>번호 발생 빈도 TOP 15</h4><div class="stats-bars">${bars||'데이터 없음'}</div></div>
+    </div>
+    <div class="detail-section"><h4>동반출현 TOP</h4><div class="pair-line">${pairs||'데이터 없음'}</div></div>
+    <div class="detail-section"><h4>최근 회차 ${Math.min(100,(d.recent_draws||[]).length)}개</h4><div class="recent-draws-100">${recent||'최근 회차 데이터 없음'}</div></div>
+  </div>`;
 }
 async function loadStats(limit=100){
   const d=await api('/api/stats?limit='+limit);
@@ -537,160 +588,47 @@ function rankClass(rank){
   if(txt.includes('5등')) return 'rank-5';
   return 'rank-miss';
 }
-function rankOrderValue(rank){
-  const txt=String(rank||'낙첨');
-  if(txt.includes('1등')) return 1;
-  if(txt.includes('2등')) return 2;
-  if(txt.includes('3등')) return 3;
-  if(txt.includes('4등')) return 4;
-  if(txt.includes('5등')) return 5;
-  return 9;
-}
-function normalizeNumberSet(raw){
-  if(Array.isArray(raw)) return raw.map(n=>Number(n)).filter(n=>Number.isFinite(n));
-  try{
-    const parsed=JSON.parse(raw||'[]');
-    if(Array.isArray(parsed)) return parsed.map(n=>Number(n)).filter(n=>Number.isFinite(n));
-  }catch(e){}
-  return String(raw||'').split(/[^0-9]+/).map(n=>Number(n)).filter(n=>Number.isFinite(n));
-}
-function renderNumberChips(nums, extra=''){
-  const arr=normalizeNumberSet(nums);
-  if(!arr.length) return '<span class="hint">번호 없음</span>';
-  return `<span class="num-chip-wrap">${arr.map(n=>`<b class="num-chip">${esc(n)}</b>`).join('')}${extra}</span>`;
-}
-function groupWinningByRound(items){
-  const map=new Map();
-  (Array.isArray(items)?items:[]).forEach((r,idx)=>{
-    const round=String(r.round_no||'-');
-    if(!map.has(round)) map.set(round,{round_no:round, rows:[], prize:0, cost:0, profit:0, best_rank:'낙첨', win_numbers:r.win_numbers||[], bonus:r.bonus, draw_date:r.draw_date||'', created_at:r.created_at||''});
-    const g=map.get(round);
-    const row={...r, _idx:idx};
-    g.rows.push(row);
-    g.prize += Number(r.prize||0);
-    g.cost += Number(r.cost||0);
-    g.profit += Number(r.profit||0);
-    if(rankOrderValue(r.rank) < rankOrderValue(g.best_rank)) g.best_rank = r.rank || '낙첨';
-    if(!g.draw_date && r.draw_date) g.draw_date=r.draw_date;
-    if(!g.created_at && r.created_at) g.created_at=r.created_at;
-    if((!g.win_numbers || !normalizeNumberSet(g.win_numbers).length) && r.win_numbers) g.win_numbers=r.win_numbers;
-    if(!g.bonus && r.bonus) g.bonus=r.bonus;
-  });
-  return [...map.values()].sort((a,b)=>Number(b.round_no)-Number(a.round_no));
-}
-function bestMatchCount(rows){ return Math.max(0, ...(rows||[]).map(r=>Number(r.match_count||r.matched_count||0))); }
-function isValidOfficialDrawDate(v){
-  const txt=String(v||'').trim();
-  if(!txt || txt==='-' || txt.toLowerCase()==='null') return false;
-  const m=txt.match(/^(\d{4})[-.](\d{1,2})[-.](\d{1,2})$/);
-  if(!m) return false;
-  const dt=new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
-  const today=new Date(); today.setHours(23,59,59,999);
-  return !Number.isNaN(dt.getTime()) && dt <= today;
-}
 function renderWinningHistorySummary(items){
-  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">저장된 실제 당첨번호와 연결된 당첨 이력이 없습니다.</div>';
-  items = items.filter(r=>normalizeNumberSet(r.win_numbers).length===6 && Number(r.bonus||0)>=1 && Number(r.bonus||0)<=45 && isValidOfficialDrawDate(r.draw_date));
-  if(!items.length) return '<div class="empty-detail">저장된 실제 당첨번호가 저장된 회차만 당첨이력에 표시됩니다.</div>';
-  const groups=groupWinningByRound(items);
-  const rows=items.slice(0,200);
+  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">당첨 이력이 없습니다.</div>';
+  const list=items.slice(0,20);
   const counts={'1등':0,'2등':0,'3등':0,'4등':0,'5등':0,'낙첨':0};
   let totalPrize=0;
-  rows.forEach(r=>{
+  list.forEach(r=>{
     const rank=String(r.rank||'낙첨');
     const key=['1등','2등','3등','4등','5등'].find(x=>rank.includes(x)) || '낙첨';
     counts[key]+=1;
     totalPrize += Number(r.prize||0);
   });
-  const hit=rows.length-counts['낙첨'];
-  const rate=rows.length ? Math.round((hit/rows.length)*100) : 0;
+  const hit=list.length-counts['낙첨'];
+  const rate=list.length ? Math.round((hit/list.length)*100) : 0;
   const best=['1등','2등','3등','4등','5등'].find(k=>counts[k]>0) || '없음';
-  return `<div class="win-summary-box rc43-accordion">
-    <div class="win-summary-top compact-summary">
-      <div><b>${groups.length}</b><span>확인 회차</span></div>
-      <div><b>${rows.length}</b><span>확인 조합</span></div>
-      <div><b>${hit}</b><span>적중 조합</span></div>
+  return `<div class="win-summary-box">
+    <div class="win-summary-top">
+      <div><b>${list.length}</b><span>최근 확인</span></div>
+      <div><b>${hit}</b><span>적중</span></div>
       <div><b>${rate}%</b><span>적중률</span></div>
-      <div><b>${formatMoney(totalPrize)}</b><span>총 당첨금</span></div>
+      <div><b>${esc(best)}</b><span>최고기록</span></div>
+      <div><b>${formatMoney(totalPrize)}</b><span>최근 당첨금</span></div>
     </div>
     <div class="win-rank-strip">
       ${['1등','2등','3등','4등','5등','낙첨'].map(k=>`<span class="${rankClass(k)}"><em>${k}</em><b>${counts[k]}</b></span>`).join('')}
     </div>
-    <div class="win-history-toolbar">
-      <input id="winHistorySearch" placeholder="회차 검색" oninput="filterWinHistoryRows()">
-      <select id="winHistoryRank" onchange="filterWinHistoryRows()"><option value="">전체결과</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option><option>5등</option><option>낙첨</option></select>
-      <select id="winHistoryLimit" onchange="filterWinHistoryRows()"><option value="10">최근 10회</option><option value="20" selected>최근 20회</option><option value="50">최근 50회</option><option value="999">전체</option></select>
-    </div>
-    <div class="win-history-table">
-      <div class="win-history-head"><span>회차</span><span>적중결과</span><span>적중조합</span><span>당첨금</span><span>추천번호</span><span></span></div>
-      ${groups.map((g,i)=>renderWinningRoundRow(g,i)).join('')}
-    </div>
+    <div class="win-card-list">${list.map(renderWinningHistoryCard).join('')}</div>
   </div>`;
 }
-function renderWinningRoundRow(g, idx){
-  const hitRows=(g.rows||[]).filter(r=>rankOrderValue(r.rank)<9);
-  const first=(g.rows||[])[0] || {};
-  const firstNums=normalizeNumberSet(first.target_numbers || first.numbers || first.combo || []);
-  const extraCount=Math.max(0, (g.rows||[]).length-1);
-  const extra=extraCount ? `<small class="num-more">외 ${extraCount}조합</small>` : '';
-  const rowRank=g.best_rank || '낙첨';
-  const rankClassName=rankClass(rowRank);
-  return `<details class="win-round-row ${rankClassName}" data-round="${esc(g.round_no)}" data-rank="${esc(rowRank)}" data-index="${idx}" ${idx===0?'open':''}>
-    <summary>
-      <span class="round-title"><b>${esc(g.round_no)}회</b><small>${esc(g.draw_date || g.created_at || '')}</small></span>
-      <span><em class="rank-badge ${rankClassName}">${esc(rowRank)}</em></span>
-      <span><b>${hitRows.length}</b> / ${(g.rows||[]).length}</span>
-      <span><strong>${formatMoney(g.prize||0)}</strong></span>
-      <span class="round-preview">${renderNumberChips(firstNums, extra)}</span>
-      <span class="open-arrow">›</span>
-    </summary>
-    <div class="win-round-detail">
-      <div class="win-detail-top">
-        <div><small>당첨번호</small>${renderNumberChips(g.win_numbers)} ${g.bonus?`<span class="bonus-chip">+ ${esc(g.bonus)}</span>`:''}</div>
-        <div><small>총 추천</small><b>${(g.rows||[]).length}조합</b></div>
-        <div><small>최고결과</small><b>${esc(rowRank)}</b></div>
-        <div><small>총 당첨금</small><b>${formatMoney(g.prize||0)}</b></div>
-      </div>
-      <div class="combo-detail-list">
-        ${(g.rows||[]).map((r,i)=>renderComboDetail(r,i)).join('')}
-      </div>
-    </div>
-  </details>`;
-}
-function renderComboDetail(r,i){
-  const nums=normalizeNumberSet(r.target_numbers || r.numbers || r.combo || []);
-  const rank=r.rank || '낙첨';
-  const cls=rankClass(rank);
-  const match=(r.match_count ?? r.matched_count ?? 0);
-  const bonusRaw=(r.bonus_match ?? false);
-  const bonus=bonusRaw===true || bonusRaw==='true' || bonusRaw==='O' || bonusRaw===1;
-  return `<div class="combo-detail-row ${cls}">
-    <span class="combo-no">${i+1}</span>
-    <span class="combo-nums">${renderNumberChips(nums)}</span>
-    <span class="combo-match">${esc(match)}개${bonus?' · 보너스':''}</span>
-    <span class="rank-badge ${cls}">${esc(rank)}</span>
-    <strong>${formatMoney(r.prize||0)}</strong>
-  </div>`;
-}
-window.filterWinHistoryRows=function(){
-  const q=String($('winHistorySearch')?.value||'').trim();
-  const rank=String($('winHistoryRank')?.value||'');
-  const limit=Number($('winHistoryLimit')?.value||20);
-  const rows=[...document.querySelectorAll('.win-round-row')];
-  let visible=0;
-  rows.forEach(row=>{
-    const okQ=!q || String(row.dataset.round||'').includes(q);
-    const rowRank=String(row.dataset.rank||'낙첨');
-    const okRank=!rank || rowRank.includes(rank);
-    const okLimit=visible < limit;
-    const show=okQ && okRank && okLimit;
-    row.style.display=show?'':'none';
-    if(okQ && okRank) visible += 1;
-  });
-};
 function renderWinningHistoryCard(r){
-  const fake={round_no:r.round_no||'-', rows:[r], prize:Number(r.prize||0), cost:Number(r.cost||0), profit:Number(r.profit||0), best_rank:r.rank||'낙첨', win_numbers:r.win_numbers||[], bonus:r.bonus, draw_date:r.draw_date||'', created_at:r.created_at||''};
-  return renderWinningRoundRow(fake, 0);
+  const rank=esc(r.rank || '낙첨');
+  const numbersRaw = r.numbers || r.combo || r.recommend_numbers || '';
+  const numbers = Array.isArray(numbersRaw) ? numbersRaw.join(', ') : String(numbersRaw||'');
+  const matched = (r.matched_count ?? r.match_count ?? r.matches ?? '-');
+  const bonusRaw = (r.bonus_match ?? r.bonus ?? false);
+  const bonus = bonusRaw===true || bonusRaw==='true' || bonusRaw==='O' || bonusRaw===1 ? 'O' : '-';
+  const prize = Number(r.prize||0);
+  return `<div class="win-history-card ${rankClass(r.rank)}">
+    <div class="win-card-head"><b>${esc(r.round_no || '-')}회</b><span>${rank}</span></div>
+    <div class="win-card-nums">${numbers ? esc(numbers) : '<span class="hint">추천번호 없음</span>'}</div>
+    <div class="win-card-meta"><small>일치 ${esc(matched)}개 · 보너스 ${esc(bonus)}</small><strong>${prize.toLocaleString()}원</strong></div>
+  </div>`;
 }
 
 function applyAdminVisibility(isSuper){
@@ -786,7 +724,7 @@ window.selectMember=function(id){
   toast(`${m.name} 회원을 선택했습니다.`);
 };
 window.detailMember=safe(async function(id){
-  const d = await api('/api/members/'+id+'/detail');
+  let d; try{ d=await api('/api/members/'+id+'/detail'); }catch(e){ d=await api('/api/members/'+id); }
   const m=d.member || d;
   const title=$('memberDetailTitle');
   const sub=$('memberDetailSub');
@@ -1160,6 +1098,8 @@ function bind(){
   $('addAdmin')?.addEventListener('click',safe(addAdmin));
   $('saveSessionTimeout')?.addEventListener('click',safe(saveSessionTimeout));
   $('createBackup')?.addEventListener('click',safe(createBackup));
+  $('rc44AutoUpdate')?.addEventListener('click',safe(rc44RunAutoUpdate));
+  $('rc44Refresh')?.addEventListener('click',safe(async()=>{ await loadDashboard(); await loadStats(100); await loadMembers(); toast('RC4-4 화면을 새로고침했습니다.'); }));
   document.querySelectorAll('.statBtn').forEach(b=>b.addEventListener('click',()=>loadStats(b.dataset.limit).catch(e=>alert(e.message))));
   $('pdfBtn')?.addEventListener('click',()=>window.print());
 }
