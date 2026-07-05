@@ -70,7 +70,7 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .detail-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border:1px solid rgba(212,175,55,.22);border-radius:18px;padding:20px;margin-bottom:18px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(0,0,0,.32))}
 .detail-page-head h3{margin:0;color:var(--gold2);font-size:28px}
 .member-detail-body{display:grid;gap:16px;max-width:100%;overflow:hidden}
-.detail-profile-grid{display:grid;grid-template-columns:1.6fr repeat(4,1fr);gap:12px}
+.detail-profile-grid{display:grid;grid-template-columns:1.6fr repeat(3,1fr);gap:12px}
 .detail-card{border:1px solid rgba(212,175,55,.24);border-radius:16px;background:rgba(0,0,0,.24);padding:16px;min-width:0;overflow:hidden}
 .detail-card h3,.detail-card p{margin:0 0 8px;word-break:break-word}.detail-card b{display:block;color:var(--gold2);font-size:24px}.detail-card span{color:var(--muted);font-weight:800}.main-profile b{font-size:18px}
 .detail-section{border:1px solid rgba(212,175,55,.20);border-radius:18px;background:rgba(0,0,0,.22);padding:18px;min-width:0;overflow:hidden}
@@ -81,3 +81,7 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .empty-detail{border:1px dashed rgba(212,175,55,.22);border-radius:12px;padding:14px;color:var(--muted)}.win-row{display:grid;grid-template-columns:120px 1fr 140px;gap:8px;border-bottom:1px solid rgba(212,175,55,.13);padding:10px 0}.win-row:last-child{border-bottom:0}.win-row strong{color:#f6d878;text-align:right}
 @media(max-width:1100px){.member-layout{grid-template-columns:1fr}.detail-profile-grid{grid-template-columns:repeat(2,1fr)}.detail-page-head{display:block}.detail-page-head .btnrow{margin-top:12px}.win-row{grid-template-columns:1fr}}
 @media(max-width:620px){.detail-profile-grid{grid-template-columns:1fr}.detail-history summary{display:block}.detail-history summary small{display:block;margin-top:4px;white-space:normal}.detail-page-head h3{font-size:22px}}
+
+
+/* RC3-14 member detail cleanup: show only message/winning histories */
+.win-numbers{display:block;margin-top:4px;color:var(--muted);white-space:normal;word-break:break-word;overflow-wrap:anywhere}.detail-section .detail-history[open]{border-color:rgba(212,175,55,.28)}

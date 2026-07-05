@@ -501,23 +501,21 @@ function formatLongText(text, maxLen=900){
 
 function renderHistoryCards(items, type){
   if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">이력이 없습니다.</div>';
-  return items.slice(0, 30).map((r, idx)=>{
-    if(type==='recommendation'){
-      const title = `${esc(r.round_no || '-')}회 추천`;
-      const created = esc(r.created_at || '');
-      const score = r.score ? ` · AI ${esc(r.score)}점` : '';
-      return `<details class="detail-history" ${idx<3?'open':''}>
-        <summary><b>${title}</b><small>${created}${score}</small></summary>
-        ${formatLongText(r.analysis || r.summary || r.memo || '', 900)}
-      </details>`;
-    }
+  return items.slice(0, 30).map((r)=>{
     if(type==='sms'){
-      return `<details class="detail-history">
+      return `<details class="detail-history" open>
         <summary><b>${esc(r.round_no || '-')}회 문구</b><small>${esc(r.created_at || '')}</small></summary>
-        ${formatLongText(r.body || '', 700)}
+        ${formatLongText(r.body || r.message || r.content || '', 900)}
       </details>`;
     }
-    return `<div class="win-row"><b>${esc(r.round_no || '-')}회</b><span>${esc(r.rank || '-')}</span><strong>${Number(r.prize||0).toLocaleString()}원</strong></div>`;
+    const numbers = r.numbers ? `<small class="win-numbers">${esc(r.numbers)}</small>` : '';
+    const matched = (r.matched_count ?? r.match_count ?? r.matches ?? '-');
+    const bonus = (r.bonus_match ?? r.bonus ?? '-') ? 'O' : '-';
+    return `<div class="win-row">
+      <div><b>${esc(r.round_no || '-')}회</b>${numbers}</div>
+      <span>일치 ${esc(matched)} / 보너스 ${esc(bonus)}</span>
+      <strong>${esc(r.rank || '낙첨')} · ${Number(r.prize||0).toLocaleString()}원</strong>
+    </div>`;
   }).join('');
 }
 
@@ -630,15 +628,13 @@ window.detailMember=safe(async function(id){
         <p>${esc(m.phone||'-')}</p>
         <div class="chip-row"><span class="chip">${esc(m.grade||'일반')}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span></div>
       </div>
-      <div class="detail-card"><b>${summary.recommendations||0}</b><span>추천 이력</span></div>
       <div class="detail-card"><b>${summary.sms||0}</b><span>문구 이력</span></div>
-      <div class="detail-card"><b>${summary.checks||0}</b><span>당첨 확인</span></div>
+      <div class="detail-card"><b>${summary.checks||0}</b><span>당첨 이력</span></div>
       <div class="detail-card"><b>${esc(summary.best_rank||'없음')}</b><span>최고 결과</span></div>
     </div>
     <div class="detail-section"><h4>회원 메모</h4><div class="memo-box">${esc(m.memo||'메모 없음')}</div></div>
-    <div class="detail-section"><h4>추천 이력</h4>${renderHistoryCards(d.recommendations,'recommendation')}</div>
     <div class="detail-section"><h4>문구 이력</h4>${renderHistoryCards(d.sms_logs,'sms')}</div>
-    <div class="detail-section"><h4>당첨 확인</h4>${renderHistoryCards(d.winning_checks,'winning')}</div>
+    <div class="detail-section"><h4>당첨 이력</h4>${renderHistoryCards(d.winning_checks,'winning')}</div>
   `;
   const selectBtn=$('memberDetailSelect');
   if(selectBtn) selectBtn.onclick=()=>selectMember(m.id);
@@ -672,7 +668,7 @@ async function generate(){
     exclude:$('exclude')?.value||''
   };
   if(!selectedMemberId){ alert('회원별 당첨확인을 위해 먼저 회원을 선택한 뒤 추천번호를 생성하세요.'); return; }
-  setBusy('generate',true,'RC3-13 회원 연동 AI 엔진 분석 중...');
+  setBusy('generate',true,'RC3-14 회원 연동 AI 엔진 분석 중...');
   try{
     const d=await api('/api/generate',{method:'POST',body});
     currentRecId=d.id||null;

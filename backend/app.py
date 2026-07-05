@@ -1438,7 +1438,7 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-12_MEMBER_LINKED_WIN_CHECK', 'rc_version': 'RC3-12', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-14_MEMBER_DETAIL_CLEANUP', 'rc_version': 'RC3-14', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair','member_detail_message_history','member_detail_winning_history','member_detail_recommendation_hidden'], 'time': now()}
 
 @app.get('/api/rc3-8/health')
 def rc38_health(authorization: str|None = Header(default=None)):
@@ -4862,4 +4862,16 @@ def rc311_engine_status(authorization: str|None = Header(default=None)):
         'overdue300': ext.get('overdue300', [])[:12],
         'sample': {'combos': sample_combos, 'details': sample_details, 'engine': _engine_summary(sample_details, sample_stats)},
         'summary': 'RC3-11 BBLOTTO AI Engine V1.0 상태 점검입니다.'
+    }
+
+
+# === RC3-14: 회원 상세 화면 정리 ===
+@app.get('/api/rc3-14/status')
+def rc314_status(authorization: str|None = Header(default=None)):
+    admin = require_admin(authorization)
+    return {
+        'ok': True,
+        'version': 'RC3-14',
+        'summary': '회원 상세 페이지에서 추천이력 노출을 제거하고 문구이력/당첨이력 중심으로 정리했습니다.',
+        'sections': ['member_profile', 'memo', 'sms_logs', 'winning_checks']
     }
