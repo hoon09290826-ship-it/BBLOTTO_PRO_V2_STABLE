@@ -700,7 +700,11 @@ async function checkWinning(){
     const d=await api('/api/check_winning',{method:'POST',body});
     if(d.wins?.length){ if($('winningNums')) $('winningNums').value=d.wins.join(' '); if($('bonusNum')) $('bonusNum').value=d.bonus||''; }
     renderWinningResult(d);
+    toast('당첨번호 자동확인이 완료되었습니다.');
     await Promise.all([loadStats(100),loadDraws(),loadDashboard(),setNextDrawRound()]);
+  }catch(e){
+    const msg = e?.message || '당첨번호 자동확인에 실패했습니다.';
+    alert(msg + '\n\n공식 조회가 막힌 경우에는 당첨번호 6개와 보너스 번호를 직접 입력한 뒤 다시 누르면 저장/확인이 가능합니다.');
   }
   finally{ setBusy('checkWinning',false); }
 }

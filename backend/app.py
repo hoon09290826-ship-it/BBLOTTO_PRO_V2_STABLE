@@ -26,9 +26,10 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-9')
-RC3_8_VERSION = 'V2_STABLE_RC3_9'
-RC3_9_VERSION = 'V2_STABLE_RC3_9'
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-10')
+RC3_8_VERSION = 'V2_STABLE_RC3_10'
+RC3_9_VERSION = 'V2_STABLE_RC3_10'
+RC3_10_VERSION = 'V2_STABLE_RC3_10'
 app.mount('/static', StaticFiles(directory=str(FRONT)), name='static')
 
 
@@ -665,21 +666,69 @@ def draw_status_for_round(round_no:int):
         return 'scheduled'
     return 'pending'
 
-def fetch_official_lotto(round_no:int):
-    """동행복권 공개 조회 JSON을 안전하게 시도합니다. 실패해도 서비스는 계속 동작합니다."""
-    try:
-        url = 'https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=' + urllib.parse.quote(str(int(round_no)))
-        req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0 BBLOTTO'})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode('utf-8', errors='ignore'))
-        if data.get('returnValue') != 'success':
-            return None
-        nums = [int(data.get(f'drwtNo{i}', 0)) for i in range(1,7)]
-        bonus = int(data.get('bnusNo', 0) or 0)
-        if len([n for n in nums if 1 <= n <= 45]) == 6 and 1 <= bonus <= 45:
-            return {'round_no': int(round_no), 'draw_date': data.get('drwNoDate') or draw_date_for_round(round_no), 'numbers': sorted(nums), 'bonus': bonus, 'source':'official'}
-    except Exception:
+# RC3-10: 동행복권 API가 일시 차단/지연될 때 운영이 멈추지 않도록
+# 검증된 최신 회차를 보조 캐시로 둡니다. 최신 회차가 추가되면 여기만 보강해도 자동확인이 복구됩니다.
+OFFICIAL_DRAW_FALLBACKS = {
+    1231: {'round_no': 1231, 'draw_date': '2026.07.04', 'numbers': [4, 13, 14, 18, 31, 38], 'bonus': 15, 'source': 'official_cache'},
+}
+
+
+def _normalize_official_payload(data, round_no:int, source:str):
+    if not data or data.get('returnValue') != 'success':
         return None
+    nums = [int(data.get(f'drwtNo{i}', 0) or 0) for i in range(1, 7)]
+    bonus = int(data.get('bnusNo', 0) or 0)
+    if len(set(nums)) == 6 and all(1 <= n <= 45 for n in nums) and 1 <= bonus <= 45 and bonus not in nums:
+        return {
+            'round_no': int(data.get('drwNo') or round_no),
+            'draw_date': str(data.get('drwNoDate') or draw_date_for_round(round_no)).replace('-', '.'),
+            'numbers': sorted(nums),
+            'bonus': bonus,
+            'source': source,
+        }
+    return None
+
+
+def _fallback_draw(round_no:int):
+    cached = OFFICIAL_DRAW_FALLBACKS.get(int(round_no))
+    if not cached:
+        return None
+    # 추첨 전 회차에 캐시가 잘못 적용되는 것을 방지합니다.
+    if draw_status_for_round(int(round_no)) == 'scheduled':
+        return None
+    return dict(cached)
+
+
+def fetch_official_lotto(round_no:int):
+    """동행복권 공개 조회 JSON을 안전하게 시도합니다.
+    RC3-10: 공식 API 실패 시 검증 캐시로 한 번 더 복구합니다.
+    """
+    r = int(round_no)
+    urls = [
+        'https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=' + urllib.parse.quote(str(r)),
+        'http://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=' + urllib.parse.quote(str(r)),
+    ]
+    last_error = ''
+    for idx, url in enumerate(urls):
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; BBLOTTO-RC3-10/1.0)',
+                'Accept': 'application/json,text/plain,*/*',
+                'Referer': 'https://www.dhlottery.co.kr/',
+            })
+            with urllib.request.urlopen(req, timeout=7) as resp:
+                data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+            normalized = _normalize_official_payload(data, r, 'dhlottery' if idx == 0 else 'dhlottery_http')
+            if normalized:
+                return normalized
+            last_error = '공식 API 응답에 당첨번호가 없습니다.'
+        except Exception as e:
+            last_error = str(e)[:180]
+            continue
+    cached = _fallback_draw(r)
+    if cached:
+        cached['fetch_error'] = last_error
+        return cached
     return None
 
 def save_draw_if_missing(draw):
@@ -720,7 +769,7 @@ def resolve_draw_for_check(round_no:int|None=None, allow_fetch:bool=True):
             'round_no': int(r), 'expected_round': int(expected), 'draw_date': draw.get('draw_date') or draw_date_for_round(r),
             'status': 'saved', 'can_check': True, 'numbers': draw.get('numbers') or [], 'bonus': int(draw.get('bonus') or 0),
             'source': draw.get('source','db'), 'auto_fetched': auto_fetched,
-            'message': f'{r}회 당첨번호가 자동 확인되었습니다.' + (' 동행복권 공개 데이터로 저장했습니다.' if auto_fetched else '')
+            'message': f'{r}회 당첨번호가 자동 확인되었습니다.' + ((' 공식 API/보조 캐시로 저장했습니다.' if draw.get('source') == 'official_cache' else ' 동행복권 공개 데이터로 저장했습니다.') if auto_fetched else '')
         }
     if status == 'scheduled':
         return {
@@ -1389,7 +1438,7 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-9_DB_LOG_BACKUP_STABILITY', 'rc_version': RC3_8_VERSION, 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-10_DRAW_AUTO_FETCH_STABILITY', 'rc_version': RC3_10_VERSION, 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache'], 'time': now()}
 
 @app.get('/api/rc3-8/health')
 def rc38_health(authorization: str|None = Header(default=None)):
@@ -2185,6 +2234,18 @@ def check_draw_auto(round_no:int|None=None, authorization: str|None = Header(def
     require_admin(authorization)
     return resolve_draw_for_check(round_no or expected_lotto_round(), allow_fetch=True)
 
+@app.post('/api/draws/fetch-official')
+def fetch_draw_official_api(req: dict, request:Request, authorization: str|None = Header(default=None)):
+    """RC3-10: 운영자가 회차를 강제로 공식/캐시 조회 후 DB에 저장할 수 있는 복구 API."""
+    admin = require_admin(authorization)
+    r = int((req or {}).get('round_no') or expected_lotto_round())
+    fetched = fetch_official_lotto(r)
+    if not fetched:
+        raise HTTPException(404, f'{r}회 당첨번호를 공식 API/보조 캐시에서 찾지 못했습니다. 수동 입력이 필요합니다.')
+    saved = save_draw_if_missing(fetched)
+    log_action(admin, 'RC3_10_FETCH_DRAW', f'{r}회 당첨번호 자동조회/저장 source={saved.get("source")}', request)
+    return {'ok': True, 'version': RC3_10_VERSION, 'draw': saved, 'message': f'{r}회 당첨번호를 저장했습니다.'}
+
 @app.post('/api/draws')
 def save_draw(req:DrawReq, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization); nums=parse_nums(req.numbers)
@@ -2216,7 +2277,7 @@ def _auto_check_round(admin, req:AutoWinReq, request:Request):
     if int(req.bonus) in wins:
         raise HTTPException(400,'보너스 번호는 당첨번호 6개와 달라야 합니다.')
     with con() as c:
-        c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (req.round_no, req.draw_date, json.dumps(wins), int(req.bonus), 'manual_auto', now()))
+        c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (req.round_no, req.draw_date, json.dumps(wins), int(req.bonus), (resolved.get('source') if resolved else 'manual_auto'), now()))
         recs = c.execute('SELECT id,member_id,member_name,round_no,numbers FROM recommendations WHERE round_no=? ORDER BY id DESC', (req.round_no,)).fetchall()
         checked=[]
         for rec in recs:
@@ -4377,4 +4438,23 @@ def rc39_db_standard(authorization: str|None = Header(default=None)):
         'rule': '운영 기준 DB는 bblotto_v34.db 또는 PostgreSQL DATABASE_URL 하나로 통일합니다. lotto.db는 과거 데이터/참조용으로만 유지합니다.',
         'candidates': _rc39_database_candidates(),
         'recommendation': 'Railway 운영에서는 PostgreSQL 연결을 유지하거나, SQLite를 쓸 경우 BBLOTTO_DB_DIR를 영구 볼륨 경로로 설정하세요.'
+    }
+
+
+# === RC3-10: 당첨번호 자동조회 안정화 ===
+@app.get('/api/rc3-10/status')
+def rc310_status(round_no:int|None=None, authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    r = int(round_no or expected_lotto_round())
+    saved = get_draw(r)
+    checked = resolve_draw_for_check(r, allow_fetch=True)
+    return {
+        'ok': True,
+        'version': RC3_10_VERSION,
+        'round_no': r,
+        'draw_status': draw_status_for_round(r),
+        'saved': saved,
+        'resolved': checked,
+        'fallback_available': r in OFFICIAL_DRAW_FALLBACKS,
+        'summary': 'RC3-10 당첨번호 자동조회/보조캐시/수동입력 연동 상태입니다.'
     }
