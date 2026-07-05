@@ -2495,37 +2495,74 @@ def _auto_check_round(admin, req:AutoWinReq, request:Request):
     with con() as c:
         _rc315_clean_future_draws_in_conn(c)
         c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (req.round_no, req.draw_date or draw_date_for_round(req.round_no), json.dumps(wins), int(req.bonus), (resolved.get('source') if resolved else 'manual_auto'), now()))
-        recs = c.execute('''
+        # RC4-4 개선: 공동추천/회원 미지정 추천은 당첨확인 결과에서 제외하고, 회원별로 묶어서 확인합니다.
+        rec_where = 'r.round_no=? AND COALESCE(r.member_id,0)>0'
+        rec_args = [req.round_no]
+        if not is_super_admin(admin):
+            rec_where += ' AND COALESCE(m.created_by,0)=?'
+            rec_args.append(int(admin.get('id') or 0))
+        recs = c.execute(f'''
             SELECT r.id,
                    r.member_id,
-                   COALESCE(NULLIF(r.member_name,''), m.name, CASE WHEN COALESCE(r.member_id,0)=0 THEN '공통 추천' ELSE '회원명 미확인' END) AS member_name,
+                   COALESCE(NULLIF(r.member_name,''), m.name, '회원명 미확인') AS member_name,
                    r.round_no,
                    r.numbers
             FROM recommendations r
-            LEFT JOIN members m ON m.id = r.member_id
-            WHERE r.round_no=?
-            ORDER BY r.id DESC
-        ''', (req.round_no,)).fetchall()
+            INNER JOIN members m ON m.id = r.member_id
+            WHERE {rec_where}
+            ORDER BY m.name ASC, r.id DESC
+        ''', rec_args).fetchall()
         checked=[]
+        member_map={}
+        rank_order={'1등':1,'2등':2,'3등':3,'4등':4,'5등':5,'낙첨':9}
         for rec in recs:
             try:
                 combos=json.loads(rec['numbers'] or '[]')
             except Exception:
                 combos=[]
-            for combo in combos:
+            mid=int(rec['member_id'] or 0)
+            mname=rec['member_name'] or '회원명 미확인'
+            group=member_map.setdefault(mid, {
+                'member_id': mid,
+                'member_name': mname,
+                'recommendation_count': 0,
+                'total_combos': 0,
+                'hit_count': 0,
+                'lose_count': 0,
+                'total_prize': 0,
+                'best_rank': '낙첨',
+                'best_prize': 0,
+                'combos': []
+            })
+            if combos:
+                group['recommendation_count'] += 1
+            for idx, combo in enumerate(combos, start=1):
                 r=rank_result(combo, wins, int(req.bonus))
                 target=json.dumps(r['combo'], ensure_ascii=False)
                 old=c.execute('SELECT id FROM winning_checks WHERE round_no=? AND COALESCE(member_id,0)=COALESCE(?,0) AND target_numbers=? AND win_numbers=? AND bonus=?', (req.round_no, rec['member_id'], target, json.dumps(wins), int(req.bonus))).fetchone()
                 if old:
-                    c.execute('UPDATE winning_checks SET match_count=?, bonus_match=?, rank=?, prize=?, cost=?, profit=?, roi=?, created_by=?, created_at=? WHERE id=?', (r['match_count'], int(r['bonus_match']), r['rank'], r['prize'], r['cost'], r['profit'], r['roi'], admin['id'], now(), old['id']))
+                    c.execute('UPDATE winning_checks SET member_name=?, match_count=?, bonus_match=?, rank=?, prize=?, cost=?, profit=?, roi=?, created_by=?, created_at=? WHERE id=?', (mname, r['match_count'], int(r['bonus_match']), r['rank'], r['prize'], r['cost'], r['profit'], r['roi'], admin['id'], now(), old['id']))
                 else:
-                    c.execute('INSERT INTO winning_checks(member_id,member_name,round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (rec['member_id'], rec['member_name'], req.round_no, target, json.dumps(wins), int(req.bonus), r['match_count'], int(r['bonus_match']), r['rank'], r['prize'], r['cost'], r['profit'], r['roi'], admin['id'], now()))
-                checked.append({'member_id':rec['member_id'], 'member_name':rec['member_name'] or '공통 추천', **r})
+                    c.execute('INSERT INTO winning_checks(member_id,member_name,round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (rec['member_id'], mname, req.round_no, target, json.dumps(wins), int(req.bonus), r['match_count'], int(r['bonus_match']), r['rank'], r['prize'], r['cost'], r['profit'], r['roi'], admin['id'], now()))
+                item={'member_id':mid, 'member_name':mname, 'recommendation_id':rec['id'], 'combo_index':idx, **r}
+                checked.append(item)
+                group['total_combos'] += 1
+                group['total_prize'] += int(r.get('prize') or 0)
+                if r.get('rank') and r.get('rank') != '낙첨':
+                    group['hit_count'] += 1
+                else:
+                    group['lose_count'] += 1
+                if rank_order.get(r.get('rank','낙첨'),9) < rank_order.get(group['best_rank'],9):
+                    group['best_rank'] = r.get('rank') or '낙첨'
+                    group['best_prize'] = int(r.get('prize') or 0)
+                group['combos'].append(item)
         c.commit()
-    summary={'recommendations':len(recs), 'checked_combos':len(checked), 'prize':sum(x['prize'] for x in checked), 'cost':sum(x['cost'] for x in checked), 'profit':sum(x['profit'] for x in checked)}
+    member_results=list(member_map.values())
+    member_results.sort(key=lambda x: (rank_order.get(x.get('best_rank','낙첨'),9), -int(x.get('total_prize') or 0), x.get('member_name') or ''))
+    summary={'members':len(member_results), 'recommendations':len(recs), 'checked_combos':len(checked), 'hit_members':sum(1 for m in member_results if m.get('hit_count',0)>0), 'hit_combos':sum(1 for x in checked if x.get('rank')!='낙첨'), 'lose_combos':sum(1 for x in checked if x.get('rank')=='낙첨'), 'prize':sum(x['prize'] for x in checked), 'cost':sum(x['cost'] for x in checked), 'profit':sum(x['profit'] for x in checked)}
     summary['roi']=round((summary['profit']/summary['cost']*100),2) if summary['cost'] else 0
-    log_action(admin,'AUTO_WIN_CHECK',f'{req.round_no}회차 당첨번호 저장 및 추천이력 자동확인 {len(checked)}조합',request)
-    return {'ok':True, 'round_no':req.round_no, 'wins':wins, 'bonus':int(req.bonus), 'draw_date':req.draw_date, 'auto_resolved': bool(resolved), 'summary':summary, 'results':checked[:300]}
+    log_action(admin,'AUTO_WIN_CHECK',f'{req.round_no}회차 회원별 자동 당첨확인 {len(member_results)}명/{len(checked)}조합',request)
+    return {'ok':True, 'round_no':req.round_no, 'wins':wins, 'bonus':int(req.bonus), 'draw_date':req.draw_date, 'auto_resolved': bool(resolved), 'summary':summary, 'member_results':member_results, 'results':checked[:300]}
 
 @app.post('/api/check_winning')
 def check_winning_alias(req:AutoWinReq, request:Request, authorization: str|None = Header(default=None)):

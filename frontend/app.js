@@ -534,11 +534,72 @@ async function setNextDrawRound(){
     return d;
   }catch(e){ console.error(e); return null; }
 }
+function rankBadgeClass(rank){
+  const r=String(rank||'낙첨');
+  if(r.includes('1')) return 'rank-1';
+  if(r.includes('2')) return 'rank-2';
+  if(r.includes('3')) return 'rank-3';
+  if(r.includes('4')) return 'rank-4';
+  if(r.includes('5')) return 'rank-5';
+  return 'rank-lose';
+}
+function renderWinNumberChips(nums){
+  const arr=Array.isArray(nums) ? nums : String(nums||'').split(/[^0-9]+/).filter(Boolean).map(Number);
+  return arr.slice(0,6).map(n=>`<span class="num-chip">${esc(n)}</span>`).join('');
+}
+window.toggleWinMember=function(mid){
+  const el=$('winMemberDetail_'+mid);
+  const btn=$('winMemberArrow_'+mid);
+  if(!el) return;
+  const open=el.style.display==='block';
+  el.style.display=open?'none':'block';
+  if(btn) btn.textContent=open?'›':'⌄';
+};
 function renderWinningResult(d){
   const box=$('winningResult'); if(!box) return;
-  const rows=(d.results||[]).slice(0,100).map(r=>`<tr><td>${esc(r.member_name||'공통 추천')}</td><td>${(r.combo||[]).join(', ')}</td><td>${r.match_count}</td><td>${r.bonus_match?'O':'-'}</td><td><b>${r.rank}</b></td><td>${Number(r.prize||0).toLocaleString()}</td></tr>`).join('');
-  box.innerHTML=`<div class="result-summary"><b>${d.round_no || d.round}회차 자동 확인 완료</b><br>추천이력 ${d.summary?.recommendations||0}건 / 조합 ${d.summary?.checked_combos||0}개 / 당첨금 ${Number(d.summary?.prize||0).toLocaleString()}원</div>
-  <table class="simple-table"><thead><tr><th>회원</th><th>추천번호</th><th>일치</th><th>보너스</th><th>등수</th><th>당첨금</th></tr></thead><tbody>${rows||'<tr><td colspan="6">해당 회차 추천 이력이 없습니다.</td></tr>'}</tbody></table>`;
+  const members=Array.isArray(d.member_results) ? d.member_results : [];
+  const fallbackGroup={};
+  if(!members.length && Array.isArray(d.results)){
+    d.results.forEach(r=>{
+      if(!r.member_id) return;
+      const key=r.member_id;
+      if(!fallbackGroup[key]) fallbackGroup[key]={member_id:r.member_id,member_name:r.member_name||'회원명 미확인',total_combos:0,hit_count:0,lose_count:0,total_prize:0,best_rank:'낙첨',best_prize:0,combos:[]};
+      const g=fallbackGroup[key];
+      g.total_combos++; g.total_prize+=Number(r.prize||0); g.combos.push(r);
+      if(r.rank && r.rank!=='낙첨') g.hit_count++; else g.lose_count++;
+      const order={'1등':1,'2등':2,'3등':3,'4등':4,'5등':5,'낙첨':9};
+      if((order[r.rank]||9) < (order[g.best_rank]||9)){ g.best_rank=r.rank; g.best_prize=Number(r.prize||0); }
+    });
+  }
+  const list=members.length ? members : Object.values(fallbackGroup);
+  const summary=d.summary||{};
+  const rows=list.map((m,idx)=>{
+    const best=m.best_rank||'낙첨';
+    const combos=(m.combos||[]).map((c,i)=>`<tr>
+      <td>${esc(c.combo_index||i+1)}번</td>
+      <td>${renderWinNumberChips(c.combo||[])}</td>
+      <td>${esc(c.match_count||0)}개${c.bonus_match?' + 보너스':''}</td>
+      <td><span class="rank-badge ${rankBadgeClass(c.rank)}">${esc(c.rank||'낙첨')}</span></td>
+      <td>${Number(c.prize||0).toLocaleString()}원</td>
+    </tr>`).join('');
+    return `<div class="win-member-card">
+      <div class="win-member-row">
+        <div class="win-member-name"><b>${esc(m.member_name||'회원명 미확인')}</b><small>${esc(m.total_combos||0)}조합 확인</small></div>
+        <div><b>${esc(m.hit_count||0)}</b><small>당첨</small></div>
+        <div><b>${esc(m.lose_count||0)}</b><small>낙첨</small></div>
+        <div><span class="rank-badge ${rankBadgeClass(best)}">${esc(best)}</span><small>최고당첨</small></div>
+        <div><b>${Number(m.total_prize||0).toLocaleString()}원</b><small>총 당첨금</small></div>
+        <button class="icon-btn" id="winMemberArrow_${esc(m.member_id||idx)}" onclick="toggleWinMember('${esc(m.member_id||idx)}')">›</button>
+      </div>
+      <div class="win-member-detail" id="winMemberDetail_${esc(m.member_id||idx)}" style="display:none">
+        <div class="win-detail-head"><b>${esc(d.round_no || d.round)}회 추천 조합 상세</b><span>당첨번호 ${renderWinNumberChips(d.wins||[])} ${d.bonus?`+ <span class="num-chip bonus">${esc(d.bonus)}</span>`:''}</span></div>
+        <table class="simple-table win-combo-table"><thead><tr><th>조합</th><th>추천번호</th><th>일치</th><th>결과</th><th>당첨금</th></tr></thead><tbody>${combos||'<tr><td colspan="5">확인된 조합이 없습니다.</td></tr>'}</tbody></table>
+      </div>
+    </div>`;
+  }).join('');
+  box.innerHTML=`<div class="result-summary rc44-win-summary"><b>${esc(d.round_no || d.round)}회차 회원별 자동 확인 완료</b><br>
+    회원 ${summary.members||list.length||0}명 / 추천 ${summary.recommendations||0}건 / 조합 ${summary.checked_combos||0}개 / 당첨조합 ${summary.hit_combos||0}개 / 낙첨조합 ${summary.lose_combos||0}개 / 총 당첨금 ${Number(summary.prize||0).toLocaleString()}원</div>
+    <div class="win-member-list">${rows||'<div class="empty-detail">해당 회차 회원별 추천 이력이 없습니다.</div>'}</div>`;
 }
 
 function openPanel(tabId, title){
