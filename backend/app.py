@@ -26,10 +26,10 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-10')
-RC3_8_VERSION = 'V2_STABLE_RC3_10'
-RC3_9_VERSION = 'V2_STABLE_RC3_10'
-RC3_10_VERSION = 'V2_STABLE_RC3_10'
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC3-12')
+RC3_8_VERSION = 'V2_STABLE_RC3_12'
+RC3_9_VERSION = 'V2_STABLE_RC3_12'
+RC3_10_VERSION = 'V2_STABLE_RC3_12'
 app.mount('/static', StaticFiles(directory=str(FRONT)), name='static')
 
 
@@ -1438,7 +1438,7 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-11_AI_ENGINE_V1_0', 'rc_version': 'RC3-11', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC3-12_MEMBER_LINKED_WIN_CHECK', 'rc_version': 'RC3-12', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair'], 'time': now()}
 
 @app.get('/api/rc3-8/health')
 def rc38_health(authorization: str|None = Header(default=None)):
@@ -2014,20 +2014,74 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
     if ranked: best=sorted(ranked, key=lambda x:order.get(x,9))[0]
     return {'member':dict(m),'recommendations':rec_list,'sms_logs':[dict(r) for r in sms],'winning_checks':win_list,'summary':{'recommendations':len(rec_list),'sms':len(sms),'checks':len(win_list),'best_rank':best,'total_prize':total_prize,'total_cost':total_cost,'total_profit':total_profit,'roi':round((total_profit/total_cost*100),2) if total_cost else 0,'latest_recommendation': rec_list[0]['created_at'] if rec_list else '', 'latest_sms': dict(sms[0])['created_at'] if sms else ''}}
 
+
+def rc312_resolve_member(c, member_id=None, member_name=''):
+    """RC3-12: 추천번호/당첨확인이 회원과 끊기지 않도록 회원 ID/이름을 표준화합니다."""
+    mid = None
+    name = (member_name or '').strip()
+    if member_id:
+        m = c.execute('SELECT id,name FROM members WHERE id=?', (member_id,)).fetchone()
+        if m:
+            mid = int(m['id'])
+            name = m['name'] or name
+    if not mid and name:
+        m = c.execute('SELECT id,name FROM members WHERE name=? ORDER BY id DESC LIMIT 1', (name,)).fetchone()
+        if m:
+            mid = int(m['id'])
+            name = m['name'] or name
+    return mid, name
+
+
+@app.get('/api/rc3-12/member-link-status')
+def rc312_member_link_status(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    with con() as c:
+        members = c.execute('SELECT COUNT(*) c FROM members').fetchone()['c']
+        recs = c.execute('SELECT COUNT(*) c FROM recommendations').fetchone()['c']
+        linked = c.execute('SELECT COUNT(*) c FROM recommendations WHERE COALESCE(member_id,0)>0').fetchone()['c']
+        orphan = c.execute('SELECT COUNT(*) c FROM recommendations WHERE COALESCE(member_id,0)=0').fetchone()['c']
+        latest_orphans = c.execute('SELECT id,round_no,member_name,created_at FROM recommendations WHERE COALESCE(member_id,0)=0 ORDER BY id DESC LIMIT 20').fetchall()
+    return {'ok': True, 'version': 'RC3-12', 'members': members, 'recommendations': recs, 'linked_recommendations': linked, 'orphan_recommendations': orphan, 'latest_orphans': [dict(r) for r in latest_orphans], 'message': '회원 선택 없이 생성된 기존 추천이력은 공통 추천으로 표시됩니다. 특정 회원으로 연결하려면 /api/rc3-12/link-orphan-recommendations 를 사용하세요.'}
+
+
+@app.post('/api/rc3-12/link-orphan-recommendations')
+def rc312_link_orphan_recommendations(req: dict, request:Request, authorization: str|None = Header(default=None)):
+    admin = require_admin(authorization)
+    member_id = int((req or {}).get('member_id') or 0)
+    round_no = int((req or {}).get('round_no') or 0)
+    if member_id <= 0:
+        raise HTTPException(400, '연결할 회원을 선택하세요.')
+    with con() as c:
+        m = c.execute('SELECT id,name FROM members WHERE id=?', (member_id,)).fetchone()
+        if not m:
+            raise HTTPException(404, '회원을 찾을 수 없습니다.')
+        params = [member_id, m['name'], now()]
+        where = 'COALESCE(member_id,0)=0'
+        if round_no > 0:
+            where += ' AND round_no=?'
+            params.append(round_no)
+        cur = c.execute(f'UPDATE recommendations SET member_id=?, member_name=?, created_at=COALESCE(NULLIF(created_at,""), ?) WHERE {where}', params)
+        # 이미 당첨확인이 되어 있는 공통 추천 결과도 같은 회차 기준으로 회원명을 보정합니다.
+        wc_params = [member_id, m['name']]
+        wc_where = 'COALESCE(member_id,0)=0'
+        if round_no > 0:
+            wc_where += ' AND round_no=?'
+            wc_params.append(round_no)
+        c.execute(f'UPDATE winning_checks SET member_id=?, member_name=? WHERE {wc_where}', wc_params)
+        c.commit()
+        changed = cur.rowcount if cur.rowcount is not None else 0
+    log_action(admin, 'RC3_12_LINK_ORPHAN_RECOMMENDATIONS', f'{round_no or "전체"}회차 미연결 추천이력 {changed}건을 {m["name"]} 회원으로 연결', request)
+    return {'ok': True, 'version': 'RC3-12', 'updated': changed, 'member_id': member_id, 'member_name': m['name'], 'round_no': round_no or None}
+
 @app.post('/api/generate')
 def generate(req:GenerateReq, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     member_name=''
     member_id=req.member_id
-    if member_id:
-        with con() as c:
-            m=c.execute('SELECT id,name FROM members WHERE id=?',(member_id,)).fetchone()
-            if m:
-                member_name=m['name'] or ''
-                member_id=m['id']
-            else:
-                # 삭제되었거나 잘못된 회원 ID가 들어와도 추천 생성 자체는 중단하지 않습니다.
-                member_id=None
+    with con() as c:
+        member_id, member_name = rc312_resolve_member(c, member_id, '')
+    # RC3-12: 회원을 선택하지 않은 추천은 기존 호환을 위해 허용하지만,
+    # 프론트에서는 회원 선택을 안내하여 이후 당첨확인에서 '회원 선택 없음'이 나오지 않도록 합니다.
     excluded_value = req.excluded or req.exclude or ''
     safe_count=max(1, min(50, int(req.count or 10)))
     safe_round=max(1, int(req.round_no or 1))
@@ -2039,7 +2093,7 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
     analysis=clean_template_text(build_analysis_text(safe_round, st, safe_mode, req.fixed, excluded_value, details))
     sms=clean_template_text(build_sms(member_name, safe_round, combos, analysis, details))
     engine=_engine_summary(details, st)
-    engine['phase']='RC3-8'
+    engine['phase']='RC3-12'
     engine['rc38_report']=rc38_generation_report(combos, details, safe_round, safe_mode)
     engine['top3']=rc37_top3(combos, details)
     engine['quality_guide']='VIP 94점 이상 / PREMIUM 89점 이상 / STANDARD 기본 추천 · RC3-8 중복/분산 보정 적용'
@@ -2065,11 +2119,11 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
         rid=cur.lastrowid
         try:
             c.execute('CREATE TABLE IF NOT EXISTS engine_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation_id INTEGER DEFAULT 0, round_no INTEGER DEFAULT 0, member_id INTEGER DEFAULT 0, mode TEXT DEFAULT "balanced", count INTEGER DEFAULT 0, candidate_count INTEGER DEFAULT 0, selected_count INTEGER DEFAULT 0, avg_score REAL DEFAULT 0, max_score REAL DEFAULT 0, min_score REAL DEFAULT 0, engine_version TEXT DEFAULT "", created_by INTEGER DEFAULT 0, created_at TEXT)')
-            c.execute('INSERT INTO engine_runs(recommendation_id,round_no,member_id,mode,count,candidate_count,selected_count,avg_score,max_score,min_score,engine_version,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', (rid, safe_round, member_id or 0, safe_mode, len(combos), engine.get('candidate_count',0), engine.get('selected_count',len(combos)), engine.get('avg_score',0), engine.get('max_score',0), engine.get('min_score',0), engine.get('engine_version') or engine.get('version') or 'BBLOTTO_PRO_V2_STABLE_RC3_8', admin['id'], now()))
+            c.execute('INSERT INTO engine_runs(recommendation_id,round_no,member_id,mode,count,candidate_count,selected_count,avg_score,max_score,min_score,engine_version,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', (rid, safe_round, member_id or 0, safe_mode, len(combos), engine.get('candidate_count',0), engine.get('selected_count',len(combos)), engine.get('avg_score',0), engine.get('max_score',0), engine.get('min_score',0), engine.get('engine_version') or engine.get('version') or 'BBLOTTO_PRO_V2_STABLE_RC3_12', admin['id'], now()))
         except Exception:
             pass
         c.commit()
-    log_action(admin,'GENERATE_RC3_8',f'{safe_round}회차 {len(combos)}조합 생성 · 평균 {engine.get("avg_score",0)}점 · 최대중복 {engine.get("rc38_report",{}).get("max_overlap",0)}',request)
+    log_action(admin,'GENERATE_RC3_12',f'{safe_round}회차 {len(combos)}조합 생성 · 평균 {engine.get("avg_score",0)}점 · 최대중복 {engine.get("rc38_report",{}).get("max_overlap",0)}',request)
     return {'id':rid,'round_no':safe_round,'round':safe_round,'sets':combos,'combos':combos,'details':details,'top3':engine.get('top3',[]),'engine':engine,'analysis':analysis,'sms':sms,'member_id':member_id,'member_name':member_name,'member_notice':sms,'quality_guide':engine.get('quality_guide')}
 
 
@@ -2278,7 +2332,17 @@ def _auto_check_round(admin, req:AutoWinReq, request:Request):
         raise HTTPException(400,'보너스 번호는 당첨번호 6개와 달라야 합니다.')
     with con() as c:
         c.execute('INSERT OR REPLACE INTO draws(round_no,draw_date,numbers,bonus,source,updated_at) VALUES(?,?,?,?,?,?)', (req.round_no, req.draw_date, json.dumps(wins), int(req.bonus), (resolved.get('source') if resolved else 'manual_auto'), now()))
-        recs = c.execute('SELECT id,member_id,member_name,round_no,numbers FROM recommendations WHERE round_no=? ORDER BY id DESC', (req.round_no,)).fetchall()
+        recs = c.execute('''
+            SELECT r.id,
+                   r.member_id,
+                   COALESCE(NULLIF(r.member_name,''), m.name, CASE WHEN COALESCE(r.member_id,0)=0 THEN '공통 추천' ELSE '회원명 미확인' END) AS member_name,
+                   r.round_no,
+                   r.numbers
+            FROM recommendations r
+            LEFT JOIN members m ON m.id = r.member_id
+            WHERE r.round_no=?
+            ORDER BY r.id DESC
+        ''', (req.round_no,)).fetchall()
         checked=[]
         for rec in recs:
             try:
@@ -2293,7 +2357,7 @@ def _auto_check_round(admin, req:AutoWinReq, request:Request):
                     c.execute('UPDATE winning_checks SET match_count=?, bonus_match=?, rank=?, prize=?, cost=?, profit=?, roi=?, created_by=?, created_at=? WHERE id=?', (r['match_count'], int(r['bonus_match']), r['rank'], r['prize'], r['cost'], r['profit'], r['roi'], admin['id'], now(), old['id']))
                 else:
                     c.execute('INSERT INTO winning_checks(member_id,member_name,round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (rec['member_id'], rec['member_name'], req.round_no, target, json.dumps(wins), int(req.bonus), r['match_count'], int(r['bonus_match']), r['rank'], r['prize'], r['cost'], r['profit'], r['roi'], admin['id'], now()))
-                checked.append({'member_id':rec['member_id'], 'member_name':rec['member_name'] or '회원 선택 없음', **r})
+                checked.append({'member_id':rec['member_id'], 'member_name':rec['member_name'] or '공통 추천', **r})
         c.commit()
     summary={'recommendations':len(recs), 'checked_combos':len(checked), 'prize':sum(x['prize'] for x in checked), 'cost':sum(x['cost'] for x in checked), 'profit':sum(x['profit'] for x in checked)}
     summary['roi']=round((summary['profit']/summary['cost']*100),2) if summary['cost'] else 0
@@ -3605,7 +3669,7 @@ _install_recommend_engine_v1(globals())
 
 
 # ===== RC2 SPRINT 2-3: AI ENGINE V2 + DASHBOARD INSIGHT PATCH =====
-SPRINT23_ENGINE_VERSION = 'BBLOTTO_PRO_V2_STABLE_RC3_8'
+SPRINT23_ENGINE_VERSION = 'BBLOTTO_PRO_V2_STABLE_RC3_12'
 
 def ensure_sprint23_schema():
     """추천 엔진 실행 이력/대시보드 캐시용 테이블을 안전하게 준비합니다."""
@@ -4459,6 +4523,18 @@ def rc310_status(round_no:int|None=None, authorization: str|None = Header(defaul
         'summary': 'RC3-10 당첨번호 자동조회/보조캐시/수동입력 연동 상태입니다.'
     }
 
+
+
+# === RC3-12: 회원 연동 당첨확인 안정화 ===
+@app.get('/api/rc3-12/status')
+def rc312_status(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    with con() as c:
+        members = c.execute('SELECT COUNT(*) c FROM members').fetchone()['c']
+        recs = c.execute('SELECT COUNT(*) c FROM recommendations').fetchone()['c']
+        linked = c.execute('SELECT COUNT(*) c FROM recommendations WHERE COALESCE(member_id,0)>0').fetchone()['c']
+        checks = c.execute('SELECT COUNT(*) c FROM winning_checks').fetchone()['c']
+    return {'ok': True, 'version': 'RC3-12', 'members': members, 'recommendations': recs, 'linked_recommendations': linked, 'winning_checks': checks, 'summary': '회원 선택 → 추천번호 생성 → 추천이력 저장 → 회원별 당첨확인 흐름을 보강했습니다.'}
 
 # === RC3-11: BBLOTTO AI Engine V1.0 추천번호 고도화 ===
 AI_ENGINE_V1_VERSION = 'BBLOTTO_AI_ENGINE_V1_0_RC3_11'

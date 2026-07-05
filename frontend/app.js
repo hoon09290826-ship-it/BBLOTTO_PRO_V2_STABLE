@@ -479,7 +479,7 @@ async function setNextDrawRound(){
 }
 function renderWinningResult(d){
   const box=$('winningResult'); if(!box) return;
-  const rows=(d.results||[]).slice(0,100).map(r=>`<tr><td>${esc(r.member_name||'회원 선택 없음')}</td><td>${(r.combo||[]).join(', ')}</td><td>${r.match_count}</td><td>${r.bonus_match?'O':'-'}</td><td><b>${r.rank}</b></td><td>${Number(r.prize||0).toLocaleString()}</td></tr>`).join('');
+  const rows=(d.results||[]).slice(0,100).map(r=>`<tr><td>${esc(r.member_name||'공통 추천')}</td><td>${(r.combo||[]).join(', ')}</td><td>${r.match_count}</td><td>${r.bonus_match?'O':'-'}</td><td><b>${r.rank}</b></td><td>${Number(r.prize||0).toLocaleString()}</td></tr>`).join('');
   box.innerHTML=`<div class="result-summary"><b>${d.round_no || d.round}회차 자동 확인 완료</b><br>추천이력 ${d.summary?.recommendations||0}건 / 조합 ${d.summary?.checked_combos||0}개 / 당첨금 ${Number(d.summary?.prize||0).toLocaleString()}원</div>
   <table class="simple-table"><thead><tr><th>회원</th><th>추천번호</th><th>일치</th><th>보너스</th><th>등수</th><th>당첨금</th></tr></thead><tbody>${rows||'<tr><td colspan="6">해당 회차 추천 이력이 없습니다.</td></tr>'}</tbody></table>`;
 }
@@ -613,7 +613,8 @@ async function generate(){
     excluded:$('exclude')?.value||'',
     exclude:$('exclude')?.value||''
   };
-  setBusy('generate',true,'RC3-7 AI 엔진 분석 중...');
+  if(!selectedMemberId){ alert('회원별 당첨확인을 위해 먼저 회원을 선택한 뒤 추천번호를 생성하세요.'); return; }
+  setBusy('generate',true,'RC3-12 회원 연동 AI 엔진 분석 중...');
   try{
     const d=await api('/api/generate',{method:'POST',body});
     currentRecId=d.id||null;
@@ -623,7 +624,7 @@ async function generate(){
     const fallback = buildFallbackAnalysis(currentCombos, latestStatsCache, body.mode);
     currentAnalysis=normalizeText(d.analysis||d.ai_analysis||d.engine?.summary||fallback);
     currentSms=normalizeText(d.sms||'') || buildTemplateMessage(getSelectedMember(), currentRound, currentCombos, currentAnalysis);
-    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC3-7 안정화 엔진` : '생성 완료');
+    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC3-12 회원 연동 엔진` : '생성 완료');
     renderCombos(currentCombos,currentDetails);
     renderAnalysis(currentAnalysis);
     renderEngine(d.engine,currentDetails);
