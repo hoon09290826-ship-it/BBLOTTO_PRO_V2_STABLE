@@ -352,7 +352,7 @@ function renderMembers(list){
     const muted=['휴면','정지','종료','탈퇴'].includes(st);
     return `<div class="member-row member-card ${muted?'muted':''}">
       <div><b>${esc(m.name||'')}</b><p>${esc(m.phone||'')} · ${esc(m.grade||'일반')} · ${esc(st)} · ${esc(m.priority||'보통')}</p><small>${esc(m.memo||'')}</small></div>
-      <div class="member-actions"><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
+      <div class="member-actions"><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
     </div>`;
   }).join('');
 }
@@ -484,6 +484,43 @@ function renderWinningResult(d){
   <table class="simple-table"><thead><tr><th>회원</th><th>추천번호</th><th>일치</th><th>보너스</th><th>등수</th><th>당첨금</th></tr></thead><tbody>${rows||'<tr><td colspan="6">해당 회차 추천 이력이 없습니다.</td></tr>'}</tbody></table>`;
 }
 
+function openPanel(tabId, title){
+  document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active', b.dataset.tab===tabId));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  const p=$(tabId); if(p) p.classList.add('active');
+  if(title) setText('pageTitle', title);
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function formatLongText(text, maxLen=900){
+  const value = normalizeText(text || '');
+  if(!value) return '<span class="hint">내용 없음</span>';
+  const safeText = esc(value.length > maxLen ? value.slice(0, maxLen) + '…' : value);
+  return `<pre class="detail-pre">${safeText}</pre>`;
+}
+
+function renderHistoryCards(items, type){
+  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">이력이 없습니다.</div>';
+  return items.slice(0, 30).map((r, idx)=>{
+    if(type==='recommendation'){
+      const title = `${esc(r.round_no || '-')}회 추천`;
+      const created = esc(r.created_at || '');
+      const score = r.score ? ` · AI ${esc(r.score)}점` : '';
+      return `<details class="detail-history" ${idx<3?'open':''}>
+        <summary><b>${title}</b><small>${created}${score}</small></summary>
+        ${formatLongText(r.analysis || r.summary || r.memo || '', 900)}
+      </details>`;
+    }
+    if(type==='sms'){
+      return `<details class="detail-history">
+        <summary><b>${esc(r.round_no || '-')}회 문구</b><small>${esc(r.created_at || '')}</small></summary>
+        ${formatLongText(r.body || '', 700)}
+      </details>`;
+    }
+    return `<div class="win-row"><b>${esc(r.round_no || '-')}회</b><span>${esc(r.rank || '-')}</span><strong>${Number(r.prize||0).toLocaleString()}원</strong></div>`;
+  }).join('');
+}
+
 function applyAdminVisibility(isSuper){
   // PHASE28: 일반 관리자는 시스템/관리자 관리 메뉴를 숨기고, 내 계정만 허용
   ['adminSecurityBox','adminBackupBox','adminStatsBox','adminLogsBox','adminAddBox'].forEach(id=>{
@@ -578,13 +615,34 @@ window.selectMember=function(id){
 };
 window.detailMember=safe(async function(id){
   let d; try{ d=await api('/api/members/'+id+'/detail'); }catch(e){ d=await api('/api/members/'+id); }
-  const box=$('memberDetail'); if(!box) return;
   const m=d.member || d;
-  box.innerHTML=`<div class="detail-title"><b>${esc(m.name)}</b><p>${esc(m.phone||'')} / ${esc(m.grade||'')} / ${esc(m.status||'활성')}</p></div>
-  <div class="mini-stats"><span>추천 ${d.summary?.recommendations||0}</span><span>문구 ${d.summary?.sms||0}</span><span>확인 ${d.summary?.checks||0}</span><span>${d.summary?.best_rank||'없음'}</span></div>
-  <p>${esc(m.memo||'')}</p><h4>추천 이력</h4>` + (d.recommendations||[]).map(r=>`<div class="history"><b>${r.round_no}회</b><small>${r.created_at||''}</small><pre>${esc(r.analysis||'')}</pre></div>`).join('') +
-  `<h4>문구 이력</h4>` + (d.sms_logs||[]).map(r=>`<div class="history"><small>${r.round_no}회 · ${r.created_at||''}</small><pre>${esc((r.body||'').slice(0,600))}</pre></div>`).join('') +
-  `<h4>당첨 확인</h4>` + (d.winning_checks||[]).map(r=>`<p>${r.round_no}회 ${r.rank} · ${Number(r.prize||0).toLocaleString()}원</p>`).join('');
+  const title=$('memberDetailTitle');
+  const sub=$('memberDetailSub');
+  const body=$('memberDetailPageBody');
+  if(!body) return;
+  if(title) title.textContent = `${m.name || '회원'} 상세`;
+  if(sub) sub.textContent = `${m.phone || '-'} / ${m.grade || '일반'} / ${m.status || '활성'} / ${m.priority || '보통'}`;
+  const summary = d.summary || {};
+  body.innerHTML=`
+    <div class="detail-profile-grid">
+      <div class="detail-card main-profile">
+        <h3>${esc(m.name||'')}</h3>
+        <p>${esc(m.phone||'-')}</p>
+        <div class="chip-row"><span class="chip">${esc(m.grade||'일반')}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span></div>
+      </div>
+      <div class="detail-card"><b>${summary.recommendations||0}</b><span>추천 이력</span></div>
+      <div class="detail-card"><b>${summary.sms||0}</b><span>문구 이력</span></div>
+      <div class="detail-card"><b>${summary.checks||0}</b><span>당첨 확인</span></div>
+      <div class="detail-card"><b>${esc(summary.best_rank||'없음')}</b><span>최고 결과</span></div>
+    </div>
+    <div class="detail-section"><h4>회원 메모</h4><div class="memo-box">${esc(m.memo||'메모 없음')}</div></div>
+    <div class="detail-section"><h4>추천 이력</h4>${renderHistoryCards(d.recommendations,'recommendation')}</div>
+    <div class="detail-section"><h4>문구 이력</h4>${renderHistoryCards(d.sms_logs,'sms')}</div>
+    <div class="detail-section"><h4>당첨 확인</h4>${renderHistoryCards(d.winning_checks,'winning')}</div>
+  `;
+  const selectBtn=$('memberDetailSelect');
+  if(selectBtn) selectBtn.onclick=()=>selectMember(m.id);
+  openPanel('memberDetailPage','회원 상세');
 });
 window.deleteMember=safe(async function(id){ if(!confirm('삭제할까요?')) return; await api('/api/members/'+id,{method:'DELETE'}); await loadMembers(); await loadDashboard(); });
 window.downloadApi=function(path){ const t=token(); location.href=path+(path.includes('?')?'&':'?')+'token='+encodeURIComponent(t); };
@@ -614,7 +672,7 @@ async function generate(){
     exclude:$('exclude')?.value||''
   };
   if(!selectedMemberId){ alert('회원별 당첨확인을 위해 먼저 회원을 선택한 뒤 추천번호를 생성하세요.'); return; }
-  setBusy('generate',true,'RC3-12 회원 연동 AI 엔진 분석 중...');
+  setBusy('generate',true,'RC3-13 회원 연동 AI 엔진 분석 중...');
   try{
     const d=await api('/api/generate',{method:'POST',body});
     currentRecId=d.id||null;
@@ -624,7 +682,7 @@ async function generate(){
     const fallback = buildFallbackAnalysis(currentCombos, latestStatsCache, body.mode);
     currentAnalysis=normalizeText(d.analysis||d.ai_analysis||d.engine?.summary||fallback);
     currentSms=normalizeText(d.sms||'') || buildTemplateMessage(getSelectedMember(), currentRound, currentCombos, currentAnalysis);
-    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC3-12 회원 연동 엔진` : '생성 완료');
+    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC3-13 회원 연동 엔진` : '생성 완료');
     renderCombos(currentCombos,currentDetails);
     renderAnalysis(currentAnalysis);
     renderEngine(d.engine,currentDetails);
@@ -877,9 +935,7 @@ window.editAdmin=safe(async function(id){
 
 function bind(){
   document.querySelectorAll('.nav').forEach(btn=>btn.addEventListener('click',()=>{
-    document.querySelectorAll('.nav').forEach(b=>b.classList.remove('active')); btn.classList.add('active');
-    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active')); const p=$(btn.dataset.tab); if(p)p.classList.add('active');
-    setText('pageTitle',btn.textContent.trim());
+    openPanel(btn.dataset.tab, btn.textContent.trim());
     if(btn.dataset.tab==='stats') loadStats(100).catch(console.error);
     if(btn.dataset.tab==='account') loadMyAccount().catch(console.error);
     if(btn.dataset.tab==='admin') loadAdmin().catch(console.error);
@@ -891,6 +947,7 @@ function bind(){
   $('addMember')?.addEventListener('click',safe(addMember));
   $('saveMemberBtn')?.addEventListener('click',safe(saveMember));
   $('clearMember')?.addEventListener('click',()=>['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,'')));
+  $('memberDetailBack')?.addEventListener('click',()=>openPanel('members','회원 관리'));
   $('memberSearch')?.addEventListener('input',()=>loadMembers().catch(console.error));
   $('memberStatusFilter')?.addEventListener('change',()=>loadMembers().catch(console.error));
   $('memberGradeFilter')?.addEventListener('change',()=>loadMembers().catch(console.error));
