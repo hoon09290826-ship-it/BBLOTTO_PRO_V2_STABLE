@@ -2067,7 +2067,32 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
         if not m: raise HTTPException(404,'회원을 찾을 수 없습니다.')
         recs=c.execute('SELECT id,round_no,mode,count,numbers,analysis,avg_score,created_at FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         sms=c.execute('SELECT id,round_no,body,status,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
-        wins=c.execute('SELECT round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_at FROM winning_checks WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
+        # RC4-3 FIX: 회원 상세 당첨이력은 실제 당첨번호(draws)가 저장된 회차만 표시합니다.
+        # 예: 아직 추첨/저장되지 않은 1232회 추천 또는 과거 테스트 확인값이 회원 상세에 노출되지 않도록
+        # winning_checks를 draws와 직접 연동하고, 화면에는 draws 기준 당첨번호/보너스를 사용합니다.
+        wins=c.execute('''
+            SELECT
+                wc.round_no,
+                wc.target_numbers,
+                d.numbers AS win_numbers,
+                d.bonus AS bonus,
+                wc.match_count,
+                wc.bonus_match,
+                wc.rank,
+                wc.prize,
+                wc.cost,
+                wc.profit,
+                wc.roi,
+                COALESCE(d.draw_date, '') AS draw_date,
+                wc.created_at
+            FROM winning_checks wc
+            INNER JOIN draws d ON d.round_no = wc.round_no
+            WHERE wc.member_id=?
+              AND COALESCE(TRIM(d.numbers),'') NOT IN ('', '[]', 'null')
+              AND COALESCE(d.bonus,0) BETWEEN 1 AND 45
+            ORDER BY wc.round_no DESC, wc.id DESC
+            LIMIT 200
+        ''',(member_id,)).fetchall()
         notes=c.execute('SELECT id,note,note_type,created_by_name,created_at FROM member_notes WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
     rec_list=[]
     for r in recs:

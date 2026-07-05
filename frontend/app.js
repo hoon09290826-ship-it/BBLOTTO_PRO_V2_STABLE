@@ -563,7 +563,7 @@ function groupWinningByRound(items){
   const map=new Map();
   (Array.isArray(items)?items:[]).forEach((r,idx)=>{
     const round=String(r.round_no||'-');
-    if(!map.has(round)) map.set(round,{round_no:round, rows:[], prize:0, cost:0, profit:0, best_rank:'낙첨', win_numbers:r.win_numbers||[], bonus:r.bonus, created_at:r.created_at||''});
+    if(!map.has(round)) map.set(round,{round_no:round, rows:[], prize:0, cost:0, profit:0, best_rank:'낙첨', win_numbers:r.win_numbers||[], bonus:r.bonus, draw_date:r.draw_date||'', created_at:r.created_at||''});
     const g=map.get(round);
     const row={...r, _idx:idx};
     g.rows.push(row);
@@ -571,6 +571,7 @@ function groupWinningByRound(items){
     g.cost += Number(r.cost||0);
     g.profit += Number(r.profit||0);
     if(rankOrderValue(r.rank) < rankOrderValue(g.best_rank)) g.best_rank = r.rank || '낙첨';
+    if(!g.draw_date && r.draw_date) g.draw_date=r.draw_date;
     if(!g.created_at && r.created_at) g.created_at=r.created_at;
     if((!g.win_numbers || !normalizeNumberSet(g.win_numbers).length) && r.win_numbers) g.win_numbers=r.win_numbers;
     if(!g.bonus && r.bonus) g.bonus=r.bonus;
@@ -579,7 +580,9 @@ function groupWinningByRound(items){
 }
 function bestMatchCount(rows){ return Math.max(0, ...(rows||[]).map(r=>Number(r.match_count||r.matched_count||0))); }
 function renderWinningHistorySummary(items){
-  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">당첨 이력이 없습니다.</div>';
+  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">저장된 실제 당첨번호와 연결된 당첨 이력이 없습니다.</div>';
+  items = items.filter(r=>normalizeNumberSet(r.win_numbers).length===6 && Number(r.bonus||0)>=1 && Number(r.bonus||0)<=45);
+  if(!items.length) return '<div class="empty-detail">저장된 실제 당첨번호와 연결된 당첨 이력이 없습니다.</div>';
   const groups=groupWinningByRound(items);
   const rows=items.slice(0,200);
   const counts={'1등':0,'2등':0,'3등':0,'4등':0,'5등':0,'낙첨':0};
@@ -625,7 +628,7 @@ function renderWinningRoundRow(g, idx){
   const rankClassName=rankClass(rowRank);
   return `<details class="win-round-row ${rankClassName}" data-round="${esc(g.round_no)}" data-rank="${esc(rowRank)}" data-index="${idx}" ${idx===0?'open':''}>
     <summary>
-      <span class="round-title"><b>${esc(g.round_no)}회</b><small>${esc(g.created_at||'')}</small></span>
+      <span class="round-title"><b>${esc(g.round_no)}회</b><small>${esc(g.draw_date || g.created_at || '')}</small></span>
       <span><em class="rank-badge ${rankClassName}">${esc(rowRank)}</em></span>
       <span><b>${hitRows.length}</b> / ${(g.rows||[]).length}</span>
       <span><strong>${formatMoney(g.prize||0)}</strong></span>
@@ -677,7 +680,7 @@ window.filterWinHistoryRows=function(){
   });
 };
 function renderWinningHistoryCard(r){
-  const fake={round_no:r.round_no||'-', rows:[r], prize:Number(r.prize||0), cost:Number(r.cost||0), profit:Number(r.profit||0), best_rank:r.rank||'낙첨', win_numbers:r.win_numbers||[], bonus:r.bonus, created_at:r.created_at||''};
+  const fake={round_no:r.round_no||'-', rows:[r], prize:Number(r.prize||0), cost:Number(r.cost||0), profit:Number(r.profit||0), best_rank:r.rank||'낙첨', win_numbers:r.win_numbers||[], bonus:r.bonus, draw_date:r.draw_date||'', created_at:r.created_at||''};
   return renderWinningRoundRow(fake, 0);
 }
 
