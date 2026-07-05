@@ -2090,6 +2090,10 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
             WHERE wc.member_id=?
               AND COALESCE(TRIM(d.numbers),'') NOT IN ('', '[]', 'null')
               AND COALESCE(d.bonus,0) BETWEEN 1 AND 45
+              -- RC4-3 HARD FIX: draw_date가 없는 수동/임시 회차는 회원 상세 당첨이력에서 제외
+              AND COALESCE(TRIM(d.draw_date),'') NOT IN ('', 'null', '-')
+              -- 미래 회차/아직 발표 전 회차 방지. draw_date는 YYYY-MM-DD 또는 YYYY.MM.DD 모두 허용
+              AND date(REPLACE(d.draw_date,'.','-')) <= date('now','localtime')
             ORDER BY wc.round_no DESC, wc.id DESC
             LIMIT 200
         ''',(member_id,)).fetchall()

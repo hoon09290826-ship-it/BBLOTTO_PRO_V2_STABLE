@@ -579,10 +579,19 @@ function groupWinningByRound(items){
   return [...map.values()].sort((a,b)=>Number(b.round_no)-Number(a.round_no));
 }
 function bestMatchCount(rows){ return Math.max(0, ...(rows||[]).map(r=>Number(r.match_count||r.matched_count||0))); }
+function isValidOfficialDrawDate(v){
+  const txt=String(v||'').trim();
+  if(!txt || txt==='-' || txt.toLowerCase()==='null') return false;
+  const m=txt.match(/^(\d{4})[-.](\d{1,2})[-.](\d{1,2})$/);
+  if(!m) return false;
+  const dt=new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
+  const today=new Date(); today.setHours(23,59,59,999);
+  return !Number.isNaN(dt.getTime()) && dt <= today;
+}
 function renderWinningHistorySummary(items){
   if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">저장된 실제 당첨번호와 연결된 당첨 이력이 없습니다.</div>';
-  items = items.filter(r=>normalizeNumberSet(r.win_numbers).length===6 && Number(r.bonus||0)>=1 && Number(r.bonus||0)<=45);
-  if(!items.length) return '<div class="empty-detail">저장된 실제 당첨번호와 연결된 당첨 이력이 없습니다.</div>';
+  items = items.filter(r=>normalizeNumberSet(r.win_numbers).length===6 && Number(r.bonus||0)>=1 && Number(r.bonus||0)<=45 && isValidOfficialDrawDate(r.draw_date));
+  if(!items.length) return '<div class="empty-detail">저장된 실제 당첨번호가 저장된 회차만 당첨이력에 표시됩니다.</div>';
   const groups=groupWinningByRound(items);
   const rows=items.slice(0,200);
   const counts={'1등':0,'2등':0,'3등':0,'4등':0,'5등':0,'낙첨':0};
