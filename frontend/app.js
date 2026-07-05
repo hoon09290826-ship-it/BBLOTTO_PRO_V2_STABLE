@@ -253,7 +253,7 @@ function renderCombos(sets, details=[]){
   }
   box.classList.remove('empty');
   const top3 = top3FromDetails(sets, details);
-  const topHtml = `<div class="top3-panel rc38-top3"><h4>TOP 3 우선 추천 <small>RC3-8 분산 보정</small></h4><div class="top3-grid">${top3.map(t=>{
+  const topHtml = `<div class="top3-panel rc38-top3"><h4>TOP 3 우선 추천 <small>AI Engine V1.0</small></h4><div class="top3-grid">${top3.map(t=>{
     const d=t.detail||{}; const score=Number(d.score ?? d.vip_score ?? d.ai_score ?? 0);
     const nums=(t.nums||[]).map(n=>`<span class="mini-ball ${ballClass(n)}">${n}</span>`).join('');
     return `<div class="top3-card"><b>${t.idx}조합</b><div class="mini-nums">${nums}</div><span>${gradeLabel(d)}</span><strong>${score?score.toFixed(1):'-'}점</strong><em>${starLabel(d)}</em></div>`;
@@ -337,7 +337,7 @@ function renderEngine(engine, details=[]){
     <span><b>${filter || '-'}</b><small>최종 선별</small></span>
   </div>
   <div class="ai-pipeline-card">
-    <b>RC3-8 V2 Stable AI 엔진</b>
+    <b>BBLOTTO AI Engine V1.0</b>
     <p>${esc(pipeline)}</p>
     <div class="mini-stats"><span>1차 후보 ${esc(stage1)}</span><span>상위500 ${esc(stage2)}</span><span>상위100 ${esc(stage3)}</span></div>
     <small>${esc(v2.summary || '최근 100회 통계와 포트폴리오 분산을 함께 적용했습니다.')}</small>
