@@ -96,3 +96,30 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .mini-rec-list{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:12px 0}.mini-rec-line{display:flex;gap:10px;align-items:center;border:1px solid rgba(212,175,55,.14);border-radius:12px;padding:8px;background:rgba(255,255,255,.035)}.mini-rec-line b{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:rgba(212,175,55,.24);color:#f6d878}.mini-rec-line span{font-weight:900;color:#fff2c6}
 @media(max-width:1100px){.rc43-grid{grid-template-columns:repeat(2,1fr)}.note-write{grid-template-columns:1fr}.mini-rec-list{grid-template-columns:1fr}}
 @media(max-width:620px){.rc43-grid{grid-template-columns:1fr}}
+
+
+/* RC4-3 winning history summary style */
+.rc43-winning h4{display:flex;align-items:center;justify-content:space-between}
+.win-summary-box{display:grid;gap:14px}
+.win-summary-top{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.win-summary-top>div{border:1px solid rgba(212,175,55,.18);border-radius:14px;background:rgba(0,0,0,.24);padding:13px;text-align:center;min-width:0}
+.win-summary-top b{display:block;color:var(--gold2);font-size:22px;word-break:break-word}
+.win-summary-top span{display:block;color:var(--muted);font-size:12px;font-weight:900;margin-top:4px}
+.win-rank-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.win-rank-strip span{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid rgba(212,175,55,.18);border-radius:999px;background:rgba(0,0,0,.22);padding:8px 11px}
+.win-rank-strip em{font-style:normal;color:#eadcad;font-size:12px;font-weight:900}
+.win-rank-strip b{color:#fff2c6}
+.win-card-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.win-history-card{border:1px solid rgba(212,175,55,.18);border-radius:15px;background:rgba(0,0,0,.23);padding:13px;display:grid;gap:9px;min-width:0}
+.win-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.win-card-head b{color:#f6d878;font-size:17px}
+.win-card-head span{border:1px solid rgba(212,175,55,.28);border-radius:999px;padding:4px 9px;font-size:12px;font-weight:1000;color:#111;background:#d4af37;white-space:nowrap}
+.win-card-nums{color:#fff2c6;font-weight:900;letter-spacing:.2px;word-break:break-word;overflow-wrap:anywhere}
+.win-card-meta{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid rgba(212,175,55,.12);padding-top:9px}
+.win-card-meta small{color:var(--muted)}
+.win-card-meta strong{color:#f6d878;white-space:nowrap}
+.win-history-card.rank-miss .win-card-head span,.win-rank-strip .rank-miss{background:rgba(255,255,255,.04);color:#aaa;border-color:rgba(255,255,255,.12)}
+.win-history-card.rank-1,.win-history-card.rank-2,.win-history-card.rank-3,.win-history-card.rank-4,.win-history-card.rank-5{border-color:rgba(103,211,145,.38);box-shadow:0 0 0 1px rgba(103,211,145,.08)}
+.win-rank-strip .rank-1,.win-rank-strip .rank-2,.win-rank-strip .rank-3,.win-rank-strip .rank-4,.win-rank-strip .rank-5{border-color:rgba(103,211,145,.34);background:rgba(103,211,145,.09)}
+@media(max-width:1100px){.win-summary-top{grid-template-columns:repeat(2,1fr)}.win-rank-strip{grid-template-columns:repeat(3,1fr)}.win-card-list{grid-template-columns:1fr}}
+@media(max-width:620px){.win-summary-top,.win-rank-strip{grid-template-columns:1fr}.win-card-meta,.win-card-head{display:block}.win-card-head span,.win-card-meta strong{display:inline-block;margin-top:6px}}

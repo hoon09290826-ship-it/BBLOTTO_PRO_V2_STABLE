@@ -525,15 +525,59 @@ function renderHistoryCards(items, type){
         ${formatLongText(r.body || r.message || r.content || '', 900)}
       </details>`;
     }
-    const numbers = r.numbers ? `<small class="win-numbers">${esc(r.numbers)}</small>` : '';
-    const matched = (r.matched_count ?? r.match_count ?? r.matches ?? '-');
-    const bonus = (r.bonus_match ?? r.bonus ?? '-') ? 'O' : '-';
-    return `<div class="win-row">
-      <div><b>${esc(r.round_no || '-')}회</b>${numbers}</div>
-      <span>일치 ${esc(matched)} / 보너스 ${esc(bonus)}</span>
-      <strong>${esc(r.rank || '낙첨')} · ${Number(r.prize||0).toLocaleString()}원</strong>
-    </div>`;
+    return renderWinningHistoryCard(r);
   }).join('');
+}
+function rankClass(rank){
+  const txt=String(rank||'낙첨');
+  if(txt.includes('1등')) return 'rank-1';
+  if(txt.includes('2등')) return 'rank-2';
+  if(txt.includes('3등')) return 'rank-3';
+  if(txt.includes('4등')) return 'rank-4';
+  if(txt.includes('5등')) return 'rank-5';
+  return 'rank-miss';
+}
+function renderWinningHistorySummary(items){
+  if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">당첨 이력이 없습니다.</div>';
+  const list=items.slice(0,20);
+  const counts={'1등':0,'2등':0,'3등':0,'4등':0,'5등':0,'낙첨':0};
+  let totalPrize=0;
+  list.forEach(r=>{
+    const rank=String(r.rank||'낙첨');
+    const key=['1등','2등','3등','4등','5등'].find(x=>rank.includes(x)) || '낙첨';
+    counts[key]+=1;
+    totalPrize += Number(r.prize||0);
+  });
+  const hit=list.length-counts['낙첨'];
+  const rate=list.length ? Math.round((hit/list.length)*100) : 0;
+  const best=['1등','2등','3등','4등','5등'].find(k=>counts[k]>0) || '없음';
+  return `<div class="win-summary-box">
+    <div class="win-summary-top">
+      <div><b>${list.length}</b><span>최근 확인</span></div>
+      <div><b>${hit}</b><span>적중</span></div>
+      <div><b>${rate}%</b><span>적중률</span></div>
+      <div><b>${esc(best)}</b><span>최고기록</span></div>
+      <div><b>${formatMoney(totalPrize)}</b><span>최근 당첨금</span></div>
+    </div>
+    <div class="win-rank-strip">
+      ${['1등','2등','3등','4등','5등','낙첨'].map(k=>`<span class="${rankClass(k)}"><em>${k}</em><b>${counts[k]}</b></span>`).join('')}
+    </div>
+    <div class="win-card-list">${list.map(renderWinningHistoryCard).join('')}</div>
+  </div>`;
+}
+function renderWinningHistoryCard(r){
+  const rank=esc(r.rank || '낙첨');
+  const numbersRaw = r.numbers || r.combo || r.recommend_numbers || '';
+  const numbers = Array.isArray(numbersRaw) ? numbersRaw.join(', ') : String(numbersRaw||'');
+  const matched = (r.matched_count ?? r.match_count ?? r.matches ?? '-');
+  const bonusRaw = (r.bonus_match ?? r.bonus ?? false);
+  const bonus = bonusRaw===true || bonusRaw==='true' || bonusRaw==='O' || bonusRaw===1 ? 'O' : '-';
+  const prize = Number(r.prize||0);
+  return `<div class="win-history-card ${rankClass(r.rank)}">
+    <div class="win-card-head"><b>${esc(r.round_no || '-')}회</b><span>${rank}</span></div>
+    <div class="win-card-nums">${numbers ? esc(numbers) : '<span class="hint">추천번호 없음</span>'}</div>
+    <div class="win-card-meta"><small>일치 ${esc(matched)}개 · 보너스 ${esc(bonus)}</small><strong>${prize.toLocaleString()}원</strong></div>
+  </div>`;
 }
 
 function applyAdminVisibility(isSuper){
@@ -658,7 +702,7 @@ window.detailMember=safe(async function(id){
     <div class="detail-section"><h4>회원 메모</h4><textarea id="memberMemoEdit" class="detail-edit-textarea">${esc(m.memo||'')}</textarea><div class="btnrow"><button onclick="saveMemberMemo(${m.id})" class="primary">메모 저장</button></div></div>
     <div class="detail-section"><h4>상담 이력 추가</h4><div class="note-write"><select id="memberNoteType"><option>상담</option><option>결제</option><option>추천안내</option><option>당첨확인</option><option>기타</option></select><textarea id="memberNoteText" placeholder="상담/안내 내용을 입력하세요."></textarea><button onclick="saveMemberNote(${m.id})" class="primary">이력 추가</button></div>${renderNoteCards(d.notes)}</div>
     <div class="detail-section"><h4>문구 이력</h4>${renderHistoryCards(d.sms_logs,'sms')}</div>
-    <div class="detail-section"><h4>당첨 이력</h4>${renderHistoryCards(d.winning_checks,'winning')}</div>
+    <div class="detail-section rc43-winning"><h4>당첨 이력</h4>${renderWinningHistorySummary(d.winning_checks)}</div>
   `;
   const selectBtn=$('memberDetailSelect');
   if(selectBtn) selectBtn.onclick=()=>selectMember(m.id);
