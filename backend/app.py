@@ -1970,33 +1970,39 @@ def backup_download(filename:str, token: str|None=None, authorization: str|None 
 def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:str='priority', limit:int=500, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     wh=[]; args=[]
-    scope_sql, scope_args = member_scope_condition(admin)
+    scope_sql, scope_args = member_scope_condition(admin, 'm')
     if scope_sql:
         wh.append(scope_sql); args += scope_args
     if q:
-        wh.append('(name LIKE ? OR phone LIKE ? OR grade LIKE ? OR memo LIKE ? OR COALESCE(source,"") LIKE ? OR COALESCE(priority,"") LIKE ?)')
+        wh.append('(m.name LIKE ? OR m.phone LIKE ? OR m.grade LIKE ? OR m.memo LIKE ? OR COALESCE(m.source,"") LIKE ? OR COALESCE(m.priority,"") LIKE ? OR COALESCE(a.name,"") LIKE ? OR COALESCE(a.username,"") LIKE ?)')
         like=f'%{q}%'
-        args += [like, like, like, like, like, like]
+        args += [like, like, like, like, like, like, like, like]
     if status:
-        wh.append('COALESCE(status, "활성")=?')
+        wh.append('COALESCE(m.status, "활성")=?')
         args.append(status)
     if grade:
-        wh.append('COALESCE(grade, "일반")=?')
+        wh.append('COALESCE(m.grade, "일반")=?')
         args.append(grade)
     if priority:
-        wh.append('COALESCE(priority, "보통")=?')
+        wh.append('COALESCE(m.priority, "보통")=?')
         args.append(priority)
     sort_map={
-        'priority':'CASE COALESCE(priority,"보통") WHEN "최우선" THEN 0 WHEN "높음" THEN 1 WHEN "보통" THEN 2 ELSE 3 END, id DESC',
-        'recent':'id DESC',
-        'oldest':'id ASC',
-        'name':'name COLLATE NOCASE ASC, id DESC',
-        'updated':'COALESCE(updated_at,created_at,"") DESC, id DESC',
-        'status':'COALESCE(status,"활성") ASC, id DESC'
+        'priority':'CASE COALESCE(m.priority,"보통") WHEN "최우선" THEN 0 WHEN "높음" THEN 1 WHEN "보통" THEN 2 ELSE 3 END, m.id DESC',
+        'recent':'m.id DESC',
+        'oldest':'m.id ASC',
+        'name':'m.name COLLATE NOCASE ASC, m.id DESC',
+        'updated':'COALESCE(m.updated_at,m.created_at,"") DESC, m.id DESC',
+        'status':'COALESCE(m.status,"활성") ASC, m.id DESC'
     }
     order=sort_map.get(sort, sort_map['priority'])
     limit=max(1, min(int(limit or 500), 1000))
-    sql='SELECT * FROM members' + (' WHERE ' + ' AND '.join(wh) if wh else '') + f' ORDER BY {order} LIMIT ?'
+    sql="""
+        SELECT m.*,
+               COALESCE(a.name, a.username, '미지정') AS registered_by_name,
+               COALESCE(a.username, '') AS registered_by_username
+        FROM members m
+        LEFT JOIN admins a ON a.id = COALESCE(m.created_by,0)
+    """ + (' WHERE ' + ' AND '.join(wh) if wh else '') + f' ORDER BY {order} LIMIT ?'
     args.append(limit)
     with con() as c:
         rows=c.execute(sql, args).fetchall()

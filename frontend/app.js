@@ -350,8 +350,14 @@ function renderMembers(list){
   box.innerHTML=list.map(m=>{
     const st=m.status||'활성';
     const muted=['휴면','정지','종료','탈퇴'].includes(st);
+    const registeredBy = m.registered_by_name || m.created_by_name || m.registered_by_username || '미지정';
     return `<div class="member-row member-card ${muted?'muted':''}">
-      <div><b>${esc(m.name||'')}</b><p>${esc(m.phone||'')} · ${esc(m.grade||'일반')} · ${esc(st)} · ${esc(m.priority||'보통')}</p><small>${esc(m.memo||'')}</small></div>
+      <div>
+        <b>${esc(m.name||'')}</b>
+        <p>${esc(m.phone||'')} · ${esc(m.grade||'일반')} · ${esc(st)} · ${esc(m.priority||'보통')}</p>
+        <small class="member-owner-line">등록 관리자: <strong>${esc(registeredBy)}</strong>${m.created_at ? ' · 등록일 ' + esc(m.created_at) : ''}</small>
+        <small>${esc(m.memo||'')}</small>
+      </div>
       <div class="member-actions"><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
     </div>`;
   }).join('');

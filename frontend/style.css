@@ -132,3 +132,7 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .stats-dashboard{display:grid;gap:16px}.stats-kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stats-bars{display:grid;gap:8px}.stats-bar{display:grid;grid-template-columns:46px 1fr 44px;gap:8px;align-items:center}.stats-bar b{color:#f6d878}.stats-bar div{height:10px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden}.stats-bar i{display:block;height:100%;background:linear-gradient(90deg,#4d3905,#ffd966)}.stats-panels{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:1100px){.rc44-kpi{grid-template-columns:repeat(3,1fr)}.rc44-grid-main,.stats-panels{grid-template-columns:1fr}.rc44-hero{display:block}.rc44-hero .btnrow{margin-top:12px}.stats-kpi{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){.rc44-kpi,.stats-kpi{grid-template-columns:1fr}.rc44-mini-grid{grid-template-columns:1fr}.rc44-row{grid-template-columns:1fr}.rc44-step{display:block}}
+
+/* RC4-4 final: member owner visibility */
+.member-owner-line{display:block;margin:5px 0 2px;color:#d4af37!important;font-weight:800}
+.member-owner-line strong{color:#fff2c6;font-weight:1000}
