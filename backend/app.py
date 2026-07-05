@@ -4974,3 +4974,286 @@ def rc315_repair_draws(request:Request, authorization: str|None = Header(default
         c.commit()
     log_action(admin, 'RC3_15_REPAIR_DRAWS', f'추첨 전/미래 회차 당첨번호 {result.get("removed",0)}건 정리', request)
     return {'ok': True, 'version': 'RC3-15', **result, 'message': f'잘못 저장된 추첨 전/미래 회차 {result.get("removed",0)}건을 정리했습니다.'}
+
+# ===== RC4-2: Recommendation Engine Quality Upgrade =====
+# 최종 실행 시점에서 /api/generate가 사용하는 추천 엔진을 RC4-2 버전으로 재정의합니다.
+AI_ENGINE_RC42_VERSION = 'BBLOTTO_PRO_V2_RC4_2_AI_ENGINE'
+
+def _rc42_gap_signature(combo):
+    nums = sorted(parse_nums(combo))
+    gaps = [nums[i] - nums[i-1] for i in range(1, len(nums))]
+    return {
+        'gaps': gaps,
+        'min_gap': min(gaps) if gaps else 0,
+        'max_gap': max(gaps) if gaps else 0,
+        'small_gaps': sum(1 for g in gaps if g <= 2),
+        'wide_gaps': sum(1 for g in gaps if g >= 15),
+    }
+
+def _rc42_end_digits(combo):
+    digits = [int(n) % 10 for n in parse_nums(combo)]
+    return digits, collections.Counter(digits)
+
+def _rc42_pattern_key(combo):
+    sig = _ai_v1_signature(combo)
+    digits, dc = _rc42_end_digits(combo)
+    decade = tuple(sum(1 for n in combo if lo <= n <= hi) for lo, hi in [(1,9),(10,19),(20,29),(30,39),(40,45)])
+    return (sig['odd'], tuple(sig['zones']), decade, tuple(sorted(dc.values(), reverse=True)[:2]))
+
+def _rc42_combo_ok(combo, past=None, fixed_set=None):
+    combo = tuple(sorted(parse_nums(combo)))
+    if len(combo) != 6 or len(set(combo)) != 6:
+        return False, '중복 번호'
+    if past and combo in past:
+        return False, '과거 당첨 조합과 동일'
+    sig = _ai_v1_signature(combo)
+    gap = _rc42_gap_signature(combo)
+    digits, dc = _rc42_end_digits(combo)
+    if sig['odd'] not in (2, 3, 4):
+        return False, '홀짝 불균형'
+    if not (96 <= sig['sum'] <= 184):
+        return False, '합계 범위 이탈'
+    if max(sig['zones']) > 3 or min(sig['zones']) < 1:
+        return False, '저중고 구간 불균형'
+    if sig['cons'] > 1:
+        return False, '연속수 과다'
+    if sig['ac'] < 6 or sig['ac'] > 11:
+        return False, 'AC값 범위 이탈'
+    if max(dc.values() or [0]) > 2:
+        return False, '끝수 중복 과다'
+    if len(set(digits)) < 5:
+        return False, '끝수 분산 부족'
+    if gap['small_gaps'] > 2:
+        return False, '근접 번호 과다'
+    if gap['wide_gaps'] > 1 or gap['max_gap'] >= 20:
+        return False, '번호 간격 과다'
+    return True, '통과'
+
+def _rc42_adjusted_score(combo, st, mode, ext, profile):
+    score = float(_ai_v1_combo_score(combo, st, mode, ext, profile))
+    sig = _ai_v1_signature(combo)
+    gap = _rc42_gap_signature(combo)
+    digits, dc = _rc42_end_digits(combo)
+    if sig['odd'] == 3:
+        score += 1.5
+    if max(sig['zones']) == 2:
+        score += 1.2
+    if len(set(digits)) >= 6:
+        score += 1.4
+    elif len(set(digits)) == 5:
+        score += 0.8
+    if 118 <= sig['sum'] <= 166:
+        score += 1.1
+    if 7 <= sig['ac'] <= 10:
+        score += 1.2
+    if gap['small_gaps'] == 0:
+        score += 0.8
+    if gap['wide_gaps'] == 0:
+        score += 0.6
+    return round(max(70.0, min(99.4, score)), 1)
+
+def _rc42_detail(combo, st, mode, ext=None, profile=None):
+    ext = ext or _ai_v1_window_stats(st, 300)
+    profile = profile or _ai_v1_profile(st, mode)[0]
+    detail = _ai_v1_detail(combo, st, mode, ext, profile)
+    combo = sorted(parse_nums(combo))
+    sig = _ai_v1_signature(combo)
+    gap = _rc42_gap_signature(combo)
+    digits, dc = _rc42_end_digits(combo)
+    score = _rc42_adjusted_score(combo, st, mode, ext, profile)
+    tags = list(detail.get('tags') or [])
+    for tag in ['RC4-2 고품질 필터', '끝수 5개 이상 분산', '포트폴리오 중복 제한']:
+        if tag not in tags:
+            tags.append(tag)
+    detail.update({
+        'score': score,
+        'ai_score': score,
+        'vip_score': score,
+        'grade': 'VIP' if score >= 94 else 'PREMIUM' if score >= 89 else 'STANDARD',
+        'star': '★★★★★' if score >= 94 else '★★★★☆' if score >= 89 else '★★★★',
+        'tags': tags[:6],
+        'reason_text': ' · '.join(tags[:5]),
+        'gap_min': gap['min_gap'],
+        'gap_max': gap['max_gap'],
+        'end_digit_diversity': len(set(digits)),
+        'end_digit_counts': dict(dc),
+        'quality_rule': '홀짝·저중고·끝수·AC·합계·간격·연속수·중복패턴 RC4-2 필터 통과',
+        'engine_version': AI_ENGINE_RC42_VERSION,
+        'v2_reason': 'RC4-2는 후보를 대량 생성한 뒤 끝수 분산, 근접/광역 간격, 패턴 반복, 페어 반복, 조합 간 중복을 추가로 제한합니다.',
+    })
+    return detail
+
+def make_premium_combos(count=10, fixed='', excluded='', mode='balanced'):
+    """RC4-2: AI 후보 생성 + 고품질 패턴 필터 + 포트폴리오 중복 제한."""
+    st = latest_stats(300)
+    fixed_set = set(parse_nums(fixed)); excluded_set = set(parse_nums(excluded))
+    fixed_set = {n for n in fixed_set if n not in excluded_set}
+    if len(fixed_set) > 6:
+        fixed_set = set(sorted(fixed_set)[:6])
+    pool = [n for n in range(1, 46) if n not in excluded_set and n not in fixed_set]
+    target = max(1, min(50, int(count or 10)))
+    if len(pool) + len(fixed_set) < 6:
+        raise HTTPException(400, '고정수/제외수를 확인하세요. 선택 가능한 번호가 부족합니다.')
+    profile, ext = _ai_v1_profile(st, mode)
+    past = {tuple(sorted(d['numbers'])) for d in st.get('draws', []) if len(d.get('numbers', [])) == 6}
+    buckets = {
+        'hot': [n for n in ext['hot300'][:20] if n in pool],
+        'cold': [n for n in ext['cold300'][:20] if n in pool],
+        'overdue': [n for n in ext['overdue300'][:20] if n in pool],
+        'mid': [n for n in ext['mid300'][:24] if n in pool],
+        'all': pool[:],
+    }
+    if mode == 'aggressive':
+        plans = [['hot','hot','mid','overdue','all','cold'], ['hot','mid','all','overdue','all','all'], ['hot','cold','overdue','all','all','mid']]
+    elif mode == 'conservative':
+        plans = [['mid','mid','cold','overdue','all','all'], ['cold','overdue','mid','hot','all','all'], ['mid','cold','all','all','overdue','all']]
+    else:
+        plans = [['hot','cold','overdue','mid','all','all'], ['hot','mid','cold','overdue','all','all'], ['mid','hot','overdue','all','cold','all']]
+    candidates = []
+    seen = set()
+    tries = 0
+    needed = max(6200, target * 520)
+    max_tries = max(125000, needed * 24)
+    while len(candidates) < needed and tries < max_tries:
+        tries += 1
+        nums = set(fixed_set)
+        plan = random.choice(plans)[:]
+        random.shuffle(plan)
+        for b in plan:
+            if len(nums) >= 6:
+                break
+            usable = [n for n in buckets.get(b, pool) if n not in nums]
+            if usable:
+                nums.update(_weighted_pick(usable, [profile[n] for n in usable], 1))
+        while len(nums) < 6:
+            usable = [n for n in pool if n not in nums]
+            nums.update(_weighted_pick(usable, [profile[n] for n in usable], 1))
+        arr = tuple(sorted(nums))
+        if arr in seen:
+            continue
+        ok, reason = _rc42_combo_ok(arr, past=past, fixed_set=fixed_set)
+        if not ok:
+            continue
+        seen.add(arr)
+        candidates.append((_rc42_adjusted_score(arr, st, mode, ext, profile), list(arr)))
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+    selected = []
+    usage = collections.Counter()
+    pair_usage = collections.Counter()
+    pattern_usage = collections.Counter()
+    def can_add(combo, max_number_use, max_pair_use, max_overlap, max_pattern_use):
+        pairs = [tuple(sorted(p)) for p in itertools.combinations(combo, 2)]
+        pattern = _rc42_pattern_key(combo)
+        if any(usage[n] >= max_number_use for n in combo if n not in fixed_set):
+            return False
+        if any(pair_usage[p] >= max_pair_use for p in pairs):
+            return False
+        if pattern_usage[pattern] >= max_pattern_use:
+            return False
+        if not all(len(set(combo) & set(prev)) <= max_overlap for prev in selected):
+            return False
+        return True
+    def add_combo(combo):
+        pairs = [tuple(sorted(p)) for p in itertools.combinations(combo, 2)]
+        selected.append(combo)
+        usage.update(combo)
+        pair_usage.update(pairs)
+        pattern_usage.update([_rc42_pattern_key(combo)])
+    for score, combo in candidates:
+        if can_add(combo, 3, 1, 3, 1):
+            add_combo(combo)
+        if len(selected) >= target:
+            break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo in selected:
+                continue
+            if can_add(combo, 4, 2, 3, 2):
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo in selected:
+                continue
+            if can_add(combo, 5, 2, 4, 3):
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo not in selected:
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    details = [_rc42_detail(c, st, mode, ext, profile) for c in selected[:target]]
+    details.sort(key=lambda x: -float(x.get('score') or 0))
+    selected_sorted = [d['numbers'] for d in details]
+    st.update(ext)
+    st['ai_v1_candidates'] = len(candidates)
+    st['ai_v1_attempts'] = tries
+    st['engine_version'] = AI_ENGINE_RC42_VERSION
+    st['rc42_portfolio'] = {
+        'max_overlap': max((len(set(a) & set(b)) for i, a in enumerate(selected_sorted) for b in selected_sorted[i+1:]), default=0),
+        'unique_patterns': len({_rc42_pattern_key(c) for c in selected_sorted}),
+        'number_usage_max': max(usage.values()) if usage else 0,
+    }
+    return selected_sorted[:target], details[:target], st
+
+def _engine_summary(details, st):
+    scores = [float(d.get('score') or d.get('ai_score') or d.get('vip_score') or 0) for d in (details or []) if (d.get('score') or d.get('ai_score') or d.get('vip_score'))]
+    return {
+        'version': AI_ENGINE_RC42_VERSION,
+        'engine_version': AI_ENGINE_RC42_VERSION,
+        'phase': 'RC4-2',
+        'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
+        'max_score': round(max(scores), 1) if scores else 0,
+        'min_score': round(min(scores), 1) if scores else 0,
+        'candidate_count': int(st.get('ai_v1_candidates') or 0),
+        'selected_count': len(details or []),
+        'latest_round': st.get('latest_round') or 0,
+        'rc42_report': {
+            'pipeline': '최근 10/30/50/100/300회 통계 → 가중치 후보 생성 → RC4-2 품질 필터 → 점수화 → 포트폴리오 중복 제한',
+            'filters': '홀짝 2:4~4:2 / 합계 96~184 / 저중고 각 1개 이상 / AC 6~11 / 끝수 5개 이상 / 연속수 1쌍 이하 / 과도한 간격 제한',
+            'portfolio': st.get('rc42_portfolio') or {},
+            'summary': 'RC4-2는 번호 품질, 끝수 분산, 반복 패턴 제거, 조합 간 중복 제한을 강화한 추천 엔진입니다.'
+        },
+        'ai_engine_v1_report': {
+            'pipeline': 'RC4-2 품질 필터가 적용된 BBLOTTO AI Engine',
+            'draws_used': int(st.get('draws_used') or len(st.get('draws') or [])),
+            'candidate_count': int(st.get('ai_v1_candidates') or 0),
+            'attempts': int(st.get('ai_v1_attempts') or 0),
+            'filters': '홀짝·합계·구간·AC·끝수·간격·연속수·과거조합 제외',
+            'portfolio': '동일 번호 과사용, 동일 페어 반복, 유사 패턴 반복, 조합 간 4개 이상 중복을 제한합니다.',
+            'summary': 'BBLOTTO PRO RC4-2 추천 엔진 적용 완료'
+        },
+        'v2_pipeline_report': {
+            'pipeline': '통계 가중치 → 후보 대량 생성 → 품질 필터 → 포트폴리오 선별',
+            'stage1_candidates': int(st.get('ai_v1_candidates') or 0),
+            'stage2_filters': '끝수/간격/AC/구간/홀짝/연속수 필터 강화',
+            'stage3_portfolio': '번호·페어·패턴 중복 제한 및 TOP3 우선 표시',
+            'summary': 'RC4-2 추천번호 AI 엔진 고도화 완료'
+        }
+    }
+
+def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
+    details = details or []
+    engine = _engine_summary(details, st)
+    best = sorted(details, key=lambda x: -float(x.get('score') or 0))[:3]
+    top_nums = []
+    for d in best:
+        for n in d.get('numbers', []):
+            if n not in top_nums:
+                top_nums.append(n)
+    avg = engine.get('avg_score', 0)
+    hot = (st.get('hot300') or st.get('hot') or [])[:6]
+    overdue = (st.get('overdue300') or st.get('overdue') or [])[:6]
+    mode_name = {'balanced': '균형형', 'aggressive': '공격형', 'conservative': '보수형'}.get(mode, mode or '균형형')
+    lines = [
+        f'{round_no}회차는 RC4-2 {mode_name} 엔진으로 최근 10/30/50/100/300회 흐름을 반영했습니다.',
+        f'핵심 흐름 {", ".join(map(str, hot)) if hot else "자동 분석"} / 보강 흐름 {", ".join(map(str, overdue)) if overdue else "분산 보강"} 기준입니다.',
+        f'TOP3 핵심 후보 번호는 {", ".join(map(str, top_nums[:8])) if top_nums else "생성 결과 기준 자동 산출"}이며 평균 AI 점수는 {avg}점입니다.',
+        '끝수 5개 이상 분산, 연속수 1쌍 이하, AC값 6~11, 조합 간 중복 제한을 적용했습니다.',
+        '본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.'
+    ]
+    return '\n'.join(lines)
