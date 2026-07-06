@@ -1988,9 +1988,9 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
             OR LOWER(COALESCE(a.name,'')) LIKE ?
             OR LOWER(COALESCE(a.username,'')) LIKE ?
         )''')
-        like=f'%{str(q or '').lower()}%'
-        norm_like=f'%{q_norm}%'
-        digits_like='%' + q_digits + '%'
+        like = f"%{str(q or '').lower()}%"
+        norm_like = f"%{q_norm}%"
+        digits_like = "%" + q_digits + "%"
         args += [norm_like, digits_like if q_digits else norm_like, like, like, like, like, like, like, like, like]
     if status:
         wh.append('COALESCE(m.status, "활성")=?')
