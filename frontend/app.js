@@ -406,6 +406,7 @@ function ensureMemberSearchStatus(){
   return el;
 }
 function normalizePhoneText(v){ return String(v||'').replace(/\D/g,''); }
+function normalizePhoneForSearch(v){ return normalizePhoneText(v); }
 function getMemberSearchText(m){
   return normalizeSearchText([
     m.name, m.phone, normalizePhoneText(m.phone), m.grade, memberGradeLabel(m.grade), m.status, m.priority, m.source, m.memo,
@@ -1239,7 +1240,7 @@ function smsExportMembers(scope){
     const m = getSelectedMember();
     return m ? [m] : [];
   }
-  return (membersCache || []).filter(m => String(m.status || '활성') !== '탈퇴' && normalizePhoneForSearch(m.phone || ''));
+  return (membersCache || []).filter(m => String(m.status || '활성') !== '탈퇴' && normalizePhoneText(m.phone || ''));
 }
 function buildSmsExportRows(scope='all'){
   const members = smsExportMembers(scope);
@@ -1301,7 +1302,7 @@ function copyBulkSmsText(){
 }
 
 
-// RC6-3: 문자간다 CSV 버튼 강제 전역 핸들러
+// RC6-4: 문자간다 CSV 버튼/전화번호 정규화 HOTFIX
 function bbDownloadSmsCsvAll(){ try{ downloadSmsCsv('all'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
 function bbDownloadSmsCsvSelected(){ try{ downloadSmsCsv('selected'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
 function bbCopySmsBulk(){ try{ copyBulkSmsText(); }catch(e){ console.error(e); alert('문자 복사 중 오류: '+(e.message||e)); } }
