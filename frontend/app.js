@@ -11,6 +11,13 @@ let currentAnalysis = '';
 let currentRound = '';
 let currentRecId = null;
 let membersCache = [];
+let drawsCache = [];
+const pageState = {
+  members: {page:1, size:10},
+  winning: {page:1, size:10},
+  draws: {page:1, size:10},
+  statsDraws: {page:1, size:10}
+};
 let latestStatsCache = null;
 let currentAdmin = null;
 let sessionWatchTimer = null;
@@ -376,10 +383,69 @@ function renderEngine(engine, details=[]){
   </div>`;
 }
 
+
+function pageSizeOptions(kind){
+  const cur = pageState[kind]?.size || 10;
+  return [10,20,30,50,100].map(n=>`<option value="${n}" ${n===cur?'selected':''}>${n}개씩</option>`).join('');
+}
+function paginateItems(items, kind){
+  const state = pageState[kind] || (pageState[kind]={page:1,size:10});
+  const total = Array.isArray(items) ? items.length : 0;
+  const size = Math.max(1, Number(state.size || 10));
+  const pages = Math.max(1, Math.ceil(total / size));
+  state.page = Math.min(Math.max(1, Number(state.page || 1)), pages);
+  const start = (state.page - 1) * size;
+  return {items:(items||[]).slice(start, start + size), total, size, pages, page:state.page, start, end:Math.min(total, start + size)};
+}
+function renderPager(kind, total, page, pages, start, end, rerenderFn){
+  const disabledPrev = page <= 1 ? 'disabled' : '';
+  const disabledNext = page >= pages ? 'disabled' : '';
+  const nums = [];
+  const from = Math.max(1, page - 2);
+  const to = Math.min(pages, from + 4);
+  for(let i=from;i<=to;i++) nums.push(`<button class="page-num ${i===page?'active':''}" data-page="${i}">${i}</button>`);
+  return `<div class="bb-pagination" data-kind="${kind}" data-rerender="${rerenderFn}">
+    <div class="page-info">총 <b>${total}</b>개 · ${total ? `${start+1}~${end}` : '0'}개 표시</div>
+    <select class="page-size-select" data-kind="${kind}" data-rerender="${rerenderFn}">${pageSizeOptions(kind)}</select>
+    <div class="page-buttons">
+      <button data-page="1" ${disabledPrev}>«</button>
+      <button data-page="${page-1}" ${disabledPrev}>‹</button>
+      ${nums.join('')}
+      <button data-page="${page+1}" ${disabledNext}>›</button>
+      <button data-page="${pages}" ${disabledNext}>»</button>
+    </div>
+  </div>`;
+}
+function setPage(kind, page, rerenderFn){
+  if(!pageState[kind]) pageState[kind]={page:1,size:10};
+  pageState[kind].page = Math.max(1, Number(page||1));
+  if(rerenderFn==='members') renderMembers(membersCache);
+  if(rerenderFn==='winning' && window.__lastWinningResult) renderWinningResult(window.__lastWinningResult);
+  if(rerenderFn==='draws') renderDrawList();
+  if(rerenderFn==='stats' && latestStatsCache) renderStats(latestStatsCache);
+}
+document.addEventListener('change', function(e){
+  const sel = e.target.closest?.('.page-size-select');
+  if(!sel) return;
+  const kind = sel.dataset.kind;
+  if(!pageState[kind]) pageState[kind]={page:1,size:10};
+  pageState[kind].size = Number(sel.value || 10);
+  pageState[kind].page = 1;
+  setPage(kind, 1, sel.dataset.rerender);
+});
+document.addEventListener('click', function(e){
+  const root = e.target.closest?.('.bb-pagination');
+  const btn = e.target.closest?.('.bb-pagination button[data-page]');
+  if(!root || !btn || btn.disabled) return;
+  setPage(root.dataset.kind, Number(btn.dataset.page || 1), root.dataset.rerender);
+});
+
 function renderMembers(list){
   const box=$('memberList'); if(!box) return;
-  if(!list.length){ box.innerHTML='<p class="hint">등록된 회원이 없습니다.</p>'; return; }
-  box.innerHTML=list.map(m=>{
+  const data = Array.isArray(list) ? list : [];
+  if(!data.length){ box.innerHTML='<p class="hint">등록된 회원이 없습니다.</p>'; return; }
+  const pg = paginateItems(data, 'members');
+  const rows = pg.items.map(m=>{
     const st=m.status||'활성';
     const muted=['휴면','정지','종료','탈퇴'].includes(st);
     const registeredBy = m.registered_by_name || m.created_by_name || m.registered_by_username || '미지정';
@@ -393,6 +459,7 @@ function renderMembers(list){
       <div class="member-actions"><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
     </div>`;
   }).join('');
+  box.innerHTML = `<div class="list-topbar"><strong>회원 목록</strong>${renderPager('members', pg.total, pg.page, pg.pages, pg.start, pg.end, 'members')}</div>${rows}${renderPager('members', pg.total, pg.page, pg.pages, pg.start, pg.end, 'members')}`;
 }
 function fillMemberSelect(list){
   const sel=$('genMember'); if(!sel) return;
@@ -484,7 +551,9 @@ function renderStats(d){
   const cold=(d.cold||[]).map(n=>`<span class="ball ${ballClass(n)}">${n}</span>`).join('');
   const miss=(d.missing20||d.overdue||[]).map(n=>`<span class="ball ${ballClass(n)}">${n}</span>`).join('');
   const pairs=(d.top_pairs||[]).map(p=>`<span class="mini-chip">${(p.pair||[]).join('-')} · ${p.count}회</span>`).join('');
-  const recent=(d.recent_draws||[]).slice(0,100).map(r=>`<div class="draw-row"><b>${r.round_no}회</b><span>${(r.numbers||[]).join(', ')} + ${r.bonus||''}</span><small>${r.draw_date||''}</small></div>`).join('');
+  const recentAll=(d.recent_draws||[]).slice(0,100);
+  const statsPg=paginateItems(recentAll, 'statsDraws');
+  const recent=statsPg.items.map(r=>`<div class="draw-row"><b>${r.round_no}회</b><span>${(r.numbers||[]).join(', ')} + ${r.bonus||''}</span><small>${r.draw_date||''}</small></div>`).join('');
   const freq=d.freq || d.freq100 || {};
   const maxFreq=Math.max(1, ...Object.values(freq).map(Number));
   const bars=Object.entries(freq).sort((a,b)=>Number(b[1])-Number(a[1])).slice(0,15).map(([n,c])=>`<div class="stats-bar"><b>${n}</b><div><i style="width:${Math.round(Number(c)/maxFreq*100)}%"></i></div><span>${c}회</span></div>`).join('');
@@ -500,7 +569,7 @@ function renderStats(d){
       <div class="detail-section"><h4>번호 발생 빈도 TOP 15</h4><div class="stats-bars">${bars||'데이터 없음'}</div></div>
     </div>
     <div class="detail-section"><h4>동반출현 TOP</h4><div class="pair-line">${pairs||'데이터 없음'}</div></div>
-    <div class="detail-section"><h4>최근 회차 ${Math.min(100,(d.recent_draws||[]).length)}개</h4><div class="recent-draws-100">${recent||'최근 회차 데이터 없음'}</div></div>
+    <div class="detail-section"><h4>최근 회차 ${Math.min(100,(d.recent_draws||[]).length)}개</h4>${renderPager('statsDraws', statsPg.total, statsPg.page, statsPg.pages, statsPg.start, statsPg.end, 'stats')}<div class="recent-draws-100">${recent||'최근 회차 데이터 없음'}</div>${renderPager('statsDraws', statsPg.total, statsPg.page, statsPg.pages, statsPg.start, statsPg.end, 'stats')}</div>
   </div>`;
 }
 async function loadStats(limit=100){
@@ -525,10 +594,18 @@ function buildRealtimeRoundAnalysis(stats){
   const pair = (stats.top_pairs||[]).slice(0,3).map(p=>(p.pair||[]).join('-')).filter(Boolean).join(', ') || '데이터 없음';
   return `${nextRound?nextRound+'회차 ':''}실시간 분석입니다.\n최근 ${stats.count}회 기준 강세번호는 ${hot}, 보완번호는 ${cold}입니다.\n구간 흐름은 ${sections}, 공백수는 ${miss}, 동반출현 핵심은 ${pair}입니다.`;
 }
+function renderDrawList(){
+  const box=$('drawList'); if(!box) return;
+  const rows = Array.isArray(drawsCache) ? drawsCache : [];
+  if(!rows.length){ box.innerHTML='저장된 당첨번호가 없습니다.'; return; }
+  const pg = paginateItems(rows.slice(0,100), 'draws');
+  const body = pg.items.map(r=>`<p><b>${r.round_no}회</b> ${(r.numbers||[]).join(', ')} + ${r.bonus||''} <small>${r.draw_date||''}</small></p>`).join('');
+  box.innerHTML = `${renderPager('draws', pg.total, pg.page, pg.pages, pg.start, pg.end, 'draws')}<div class="paged-draw-list">${body}</div>${renderPager('draws', pg.total, pg.page, pg.pages, pg.start, pg.end, 'draws')}`;
+}
 async function loadDraws(){
   try{
-    const rows=await api('/api/draws?limit=100');
-    const box=$('drawList'); if(box) box.innerHTML=(rows||[]).slice(0,100).map(r=>`<p><b>${r.round_no}회</b> ${r.numbers.join(', ')} + ${r.bonus} <small>${r.draw_date||''}</small></p>`).join('') || '저장된 당첨번호가 없습니다.';
+    drawsCache=await api('/api/draws?limit=100');
+    renderDrawList();
   }catch(e){ console.error(e); }
 }
 async function setNextDrawRound(){
@@ -588,6 +665,7 @@ window.toggleWinMember=function(mid){
   if(btn) btn.textContent=open?'›':'⌄';
 };
 function renderWinningResult(d){
+  window.__lastWinningResult = d;
   const box=$('winningResult'); if(!box) return;
   const members=Array.isArray(d.member_results) ? d.member_results : [];
   const fallbackGroup={};
@@ -605,7 +683,8 @@ function renderWinningResult(d){
   }
   const list=members.length ? members : Object.values(fallbackGroup);
   const summary=d.summary||{};
-  const rows=list.map((m,idx)=>{
+  const winPg = paginateItems(list, 'winning');
+  const rows=winPg.items.map((m,idx)=>{
     const best=m.best_rank||'낙첨';
     const combos=(m.combos||[]).map((c,i)=>`<tr>
       <td>${esc(c.combo_index||i+1)}번</td>
@@ -631,7 +710,9 @@ function renderWinningResult(d){
   }).join('');
   box.innerHTML=`<div class="result-summary rc44-win-summary"><b>${esc(d.round_no || d.round)}회차 회원별 자동 확인 완료</b><br>
     회원 ${summary.members||list.length||0}명 / 추천 ${summary.recommendations||0}건 / 조합 ${summary.checked_combos||0}개 / 당첨조합 ${summary.hit_combos||0}개 / 낙첨조합 ${summary.lose_combos||0}개 / 총 당첨금 ${Number(summary.prize||0).toLocaleString()}원</div>
-    <div class="win-member-list">${rows||'<div class="empty-detail">해당 회차 회원별 추천 이력이 없습니다.</div>'}</div>`;
+    ${renderPager('winning', winPg.total, winPg.page, winPg.pages, winPg.start, winPg.end, 'winning')}
+    <div class="win-member-list">${rows||'<div class="empty-detail">해당 회차 회원별 추천 이력이 없습니다.</div>'}</div>
+    ${renderPager('winning', winPg.total, winPg.page, winPg.pages, winPg.start, winPg.end, 'winning')}`;
 }
 
 function openPanel(tabId, title){
@@ -1067,6 +1148,7 @@ async function checkWinning(){
   try{
     const d=await api('/api/check_winning',{method:'POST',body});
     if(d.wins?.length){ if($('winningNums')) $('winningNums').value=d.wins.join(' '); if($('bonusNum')) $('bonusNum').value=d.bonus||''; }
+    pageState.winning.page=1;
     renderWinningResult(d);
     toast('당첨번호 자동확인이 완료되었습니다.');
     await Promise.all([loadStats(100),loadDraws(),loadDashboard(),setNextDrawRound()]);
@@ -1258,11 +1340,11 @@ function bind(){
   $('saveMemberBtn')?.addEventListener('click',safe(saveMember));
   $('clearMember')?.addEventListener('click',()=>['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,'')));
   $('memberDetailBack')?.addEventListener('click',()=>openPanel('members','회원 관리'));
-  $('memberSearch')?.addEventListener('input',()=>loadMembers().catch(console.error));
-  $('memberStatusFilter')?.addEventListener('change',()=>loadMembers().catch(console.error));
-  $('memberGradeFilter')?.addEventListener('change',()=>loadMembers().catch(console.error));
-  $('memberPriorityFilter')?.addEventListener('change',()=>loadMembers().catch(console.error));
-  $('memberSort')?.addEventListener('change',()=>loadMembers().catch(console.error));
+  $('memberSearch')?.addEventListener('input',()=>{pageState.members.page=1; loadMembers().catch(console.error);});
+  $('memberStatusFilter')?.addEventListener('change',()=>{pageState.members.page=1; loadMembers().catch(console.error);});
+  $('memberGradeFilter')?.addEventListener('change',()=>{pageState.members.page=1; loadMembers().catch(console.error);});
+  $('memberPriorityFilter')?.addEventListener('change',()=>{pageState.members.page=1; loadMembers().catch(console.error);});
+  $('memberSort')?.addEventListener('change',()=>{pageState.members.page=1; loadMembers().catch(console.error);});
   $('genMember')?.addEventListener('change',refreshSmsPreview);
   $('saveTemplate')?.addEventListener('click',safe(saveTemplate));
   $('autoTemplate')?.addEventListener('click',autoTemplate);
@@ -1316,7 +1398,7 @@ function bind(){
   $('createBackup')?.addEventListener('click',safe(createBackup));
   $('rc44AutoUpdate')?.addEventListener('click',safe(rc44RunAutoUpdate));
   $('rc44Refresh')?.addEventListener('click',safe(async()=>{ await loadDashboard(); await loadStats(100); await loadMembers(); toast('RC4-4 화면을 새로고침했습니다.'); }));
-  document.querySelectorAll('.statBtn').forEach(b=>b.addEventListener('click',()=>loadStats(b.dataset.limit).catch(e=>alert(e.message))));
+  document.querySelectorAll('.statBtn').forEach(b=>b.addEventListener('click',()=>{ pageState.statsDraws.page=1; loadStats(b.dataset.limit).catch(e=>alert(e.message)); }));
   $('pdfBtn')?.addEventListener('click',()=>window.print());
 }
 
