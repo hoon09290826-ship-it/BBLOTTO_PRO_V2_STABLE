@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-RC_VERSION = 'RC6-7_DASHBOARD_SERVER_GUARD'
+RC_VERSION = 'RC6-10_SQL_PERCENT_STABLE'
 APP_VERSION = 'BBLOTTO PRO V2 STABLE'
 app = FastAPI(title=f'{APP_VERSION} {RC_VERSION}')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
@@ -151,8 +151,10 @@ class PgCursorCompat:
         s = s.replace('COALESCE(priority,"")', "COALESCE(priority,'')")
         s = re.sub(r'\s+COLLATE\s+NOCASE', '', s, flags=re.I)
         s = s.replace('COALESCE(last_contact_at,"")=""', "COALESCE(last_contact_at,'')=''")
-        s = s.replace('COALESCE(member_id,0)=COALESCE(?,0)', 'COALESCE(member_id,0)=COALESCE(%s,0)')
-        # sqlite의 ? 파라미터를 psycopg2의 %s로 변환
+        # sqlite의 ? 파라미터를 psycopg2의 %s로 변환한다.
+        # 단, SQL 안의 LIKE '%super%' 같은 리터럴에 들어있는 %s를
+        # 파라미터로 착각하지 않도록 ?를 먼저 안전 토큰으로 바꾼다.
+        pg_param_token = '__BBLOTTO_PG_PARAM__'
         out=[]; in_str=False; quote=''
         for ch in s:
             if ch in ("'", '"'):
@@ -161,16 +163,15 @@ class PgCursorCompat:
                 elif quote==ch:
                     in_str=False; quote=''
             if ch=='?' and not in_str:
-                out.append('%s')
+                out.append(pg_param_token)
             else:
                 out.append(ch)
         s=''.join(out)
         # psycopg2는 SQL 문자열 안의 %도 포맷 기호로 해석한다.
-        # 기존 SQLite 호환 SQL에 LIKE '%값%' 같은 리터럴이 있으면
-        # "tuple index out of range"가 발생하므로, 실제 파라미터 자리표시자 %s만 남기고
-        # 나머지 %는 %%로 이스케이프한다.
+        # 실제 파라미터 토큰은 보호하고, 나머지 %만 %%로 이스케이프한다.
         if '%' in s:
-            s = s.replace('%', '%%').replace('%%s', '%s')
+            s = s.replace('%', '%%')
+        s = s.replace(pg_param_token, '%s')
         # PostgreSQL upsert/ignore 호환
         if re.match(r'\s*INSERT\s+INTO\s+draws\s*\(', s, re.I) and 'ON CONFLICT' not in s:
             s += ' ON CONFLICT (round_no) DO UPDATE SET draw_date=EXCLUDED.draw_date, numbers=EXCLUDED.numbers, bonus=EXCLUDED.bonus, source=EXCLUDED.source, updated_at=EXCLUDED.updated_at'
@@ -1330,6 +1331,11 @@ class DrawReq(BaseModel): round_no:int; draw_date:str=''; numbers:list[int]; bon
 class AutoWinReq(BaseModel): round_no:int; winning:str|list[int]=''; bonus:int=0; draw_date:str=''
 class SettingReq(BaseModel): key:str; value:str
 
+
+@app.get('/api/rc6-10/status')
+def rc6_10_status():
+    return {'ok': True, 'version': 'RC6-10_SQL_PERCENT_STABLE', 'fix': 'postgres percent placeholder stable'}
+
 @app.get('/api/health')
 def health():
     return {'ok': True, 'app': APP_VERSION, 'phase': RC_VERSION, 'rc_version': RC_VERSION, 'time': now(), 'db_engine': DB_ENGINE, 'database_url_set': bool(DATABASE_URL), 'db_path': str(DB), 'persistent_dir': str(DB_DIR)}
@@ -1912,7 +1918,7 @@ def rc67_status(authorization: str|None = Header(default=None)):
                 checks.append({'table':table,'ok':True,'count':cnt})
             except Exception as e:
                 checks.append({'table':table,'ok':False,'error':str(e)[:200]})
-    return {'ok': all(x.get('ok') for x in checks), 'version':'RC6-7_DASHBOARD_SERVER_GUARD', 'db_engine':DB_ENGINE, 'checks':checks, 'time':now()}
+    return {'ok': all(x.get('ok') for x in checks), 'version':'RC6-10_SQL_PERCENT_STABLE', 'db_engine':DB_ENGINE, 'checks':checks, 'time':now()}
 
 
 @app.get('/')
@@ -2380,6 +2386,13 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
     }
     order=sort_map.get(sort, sort_map['priority'])
     limit=max(1, min(int(limit or 5000), 5000))
+    # PostgreSQL 호환 안정화:
+    # SQL 문자열 안에 LIKE '%super%' 같은 % 리터럴을 직접 쓰면 psycopg2가
+    # %s 파라미터로 오인해서 IndexError: tuple index out of range가 발생할 수 있다.
+    # 그래서 대표/일반 관리자 판별 패턴도 모두 바인딩 파라미터로 처리한다.
+    super_case_args = [
+        '%대표관리자%', '%최고관리자%', '%super%', '%owner%', '%대표관리자%', '%최고관리자%'
+    ]
     sql="""
         SELECT m.*,
                COALESCE(a.name, a.username, '미지정') AS registered_by_name,
@@ -2387,19 +2400,19 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
                COALESCE(a.role, '') AS registered_by_role,
                CASE
                    WHEN LOWER(COALESCE(a.username,''))='admin'
-                     OR REPLACE(LOWER(COALESCE(a.role,'')), ' ', '') LIKE '%대표관리자%'
-                     OR REPLACE(LOWER(COALESCE(a.role,'')), ' ', '') LIKE '%최고관리자%'
-                     OR LOWER(COALESCE(a.role,'')) LIKE '%super%'
-                     OR LOWER(COALESCE(a.role,'')) LIKE '%owner%'
-                     OR REPLACE(LOWER(COALESCE(a.name,'')), ' ', '') LIKE '%대표관리자%'
-                     OR REPLACE(LOWER(COALESCE(a.name,'')), ' ', '') LIKE '%최고관리자%'
+                     OR REPLACE(LOWER(COALESCE(a.role,'')), ' ', '') LIKE ?
+                     OR REPLACE(LOWER(COALESCE(a.role,'')), ' ', '') LIKE ?
+                     OR LOWER(COALESCE(a.role,'')) LIKE ?
+                     OR LOWER(COALESCE(a.role,'')) LIKE ?
+                     OR REPLACE(LOWER(COALESCE(a.name,'')), ' ', '') LIKE ?
+                     OR REPLACE(LOWER(COALESCE(a.name,'')), ' ', '') LIKE ?
                    THEN 1 ELSE 0 END AS registered_by_super_admin
         FROM members m
         LEFT JOIN admins a ON a.id = COALESCE(m.created_by,0)
     """ + (' WHERE ' + ' AND '.join(wh) if wh else '') + f' ORDER BY {order} LIMIT ?'
-    args.append(limit)
+    final_args = super_case_args + args + [limit]
     with con() as c:
-        rows=c.execute(sql, args).fetchall()
+        rows=c.execute(sql, final_args).fetchall()
     return [dict(r) for r in rows]
 
 @app.get('/api/members_summary')
@@ -6500,3 +6513,9 @@ def _engine_summary(details, st):
         }
     }
 # ===================== /RC5-5 RECOMMEND ENGINE UPGRADE =====================
+
+
+@app.get('/api/rc6-11/status')
+def rc6_11_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC6-11_MEMBER_QUERY_REAL_FIX', 'engine': DB_ENGINE, 'admin': admin.get('username')}
