@@ -44,3 +44,26 @@ python start.py
 - `/api/health` 기본 서버 상태 확인
 - `/api/rc5-13/status` GitHub/Railway 업로드 전 최종 진단
 - GitHub에는 `.env`, `__pycache__`, `.pyc`, 백업 DB를 올리지 마세요.
+
+
+## RC5-14
+- 최종 배포 점검 API: `/api/rc5-14/status`
+- GitHub 업로드 제외 규칙 `.gitignore` 추가
+- 배포 체크리스트 추가
+
+## RC5-15 배포 직전 점검
+
+배포 전 아래 명령으로 기본 검사를 실행할 수 있습니다.
+
+```bash
+python scripts/verify_release.py
+```
+
+배포 후 브라우저에서 아래 주소를 확인하세요.
+
+```text
+/api/health
+/api/rc5-15/status
+```
+
+`/api/rc5-15/status`의 `ok`가 `true`이면 GitHub/Railway 업로드 구조, DB 기본 테이블, 캐시/임시파일 상태가 정상입니다.

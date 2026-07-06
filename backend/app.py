@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-RC_VERSION = 'RC5-13_RELEASE_GUARD'
+RC_VERSION = 'RC5-15_PRE_RELEASE_GUARD'
 APP_VERSION = 'BBLOTTO PRO V2 STABLE'
 app = FastAPI(title=f'{APP_VERSION} {RC_VERSION}')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
@@ -1420,6 +1420,195 @@ def rc5_13_status():
         'counts': counts,
         'checks': checks,
         'message': 'RC5-13 배포 전 최종 점검입니다. ok가 true이면 GitHub/Railway 업로드 준비 상태입니다.'
+    }
+
+
+@app.get('/api/rc5-14/status')
+def rc5_14_status():
+    """RC5-14: GitHub/Railway 최종 업로드 전 파일/DB/환경 점검."""
+    checks = []
+    counts = {}
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': str(detail)[:300]})
+
+    required_files = [
+        ('start.py', BASE / 'start.py'),
+        ('requirements.txt', BASE / 'requirements.txt'),
+        ('runtime.txt', BASE / 'runtime.txt'),
+        ('railway.json', BASE / 'railway.json'),
+        ('Dockerfile', BASE / 'Dockerfile'),
+        ('.env.example', BASE / '.env.example'),
+        ('.gitignore', BASE / '.gitignore'),
+        ('frontend/index.html', FRONT / 'index.html'),
+        ('frontend/app.js', FRONT / 'app.js'),
+        ('frontend/style.css', FRONT / 'style.css'),
+    ]
+    for name, path in required_files:
+        add(f'file:{name}', path.exists(), path)
+
+    add('database_dir_ready', DB_DIR.exists() and os.access(str(DB_DIR), os.W_OK), DB_DIR)
+    add('export_dir_ready', EXPORT_DIR.exists() and os.access(str(EXPORT_DIR), os.W_OK), EXPORT_DIR)
+    add('db_engine_valid', DB_ENGINE in ('sqlite', 'postgresql'), DB_ENGINE)
+
+    required_tables = ['admins', 'members', 'recommendations', 'sms_logs', 'winning_checks', 'draws', 'settings', 'admin_logs']
+    try:
+        with con() as c:
+            for table in required_tables:
+                try:
+                    row = c.execute(f'SELECT COUNT(*) c FROM {table}').fetchone()
+                    counts[table] = int(row['c'] if hasattr(row, 'keys') else row[0])
+                    add(f'table:{table}', True, f'{counts[table]} rows')
+                except Exception as e:
+                    counts[table] = 0
+                    add(f'table:{table}', False, str(e))
+    except Exception as e:
+        add('database_connection', False, str(e))
+
+    blocked = []
+    secret_files = []
+    backup_files = []
+    for root, dirs, files in os.walk(BASE):
+        rel_root = os.path.relpath(root, BASE)
+        parts = set(rel_root.split(os.sep))
+        if '.git' in parts:
+            continue
+        for d in list(dirs):
+            if d in ('__pycache__', '.pytest_cache', '.mypy_cache'):
+                blocked.append(os.path.join(rel_root, d))
+        for f in files:
+            p = os.path.join(rel_root, f)
+            if f.endswith(('.pyc', '.pyo', '.tmp')):
+                blocked.append(p)
+            if f in ('.env', 'env.txt'):
+                secret_files.append(p)
+            if f.endswith(('.bak', '.backup', '.old')) or 'backup' in f.lower():
+                backup_files.append(p)
+    add('no_python_cache_files', len(blocked) == 0, ', '.join(blocked[:10]) if blocked else 'clean')
+    add('no_secret_env_files', len(secret_files) == 0, ', '.join(secret_files[:10]) if secret_files else 'clean')
+    add('no_backup_artifacts', len(backup_files) == 0, ', '.join(backup_files[:10]) if backup_files else 'clean')
+
+    return {
+        'ok': all(x['ok'] for x in checks),
+        'app': APP_VERSION,
+        'rc_version': RC_VERSION,
+        'time': now(),
+        'db_engine': DB_ENGINE,
+        'database_url_set': bool(DATABASE_URL),
+        'paths': {'base': str(BASE), 'db_dir': str(DB_DIR), 'export_dir': str(EXPORT_DIR)},
+        'counts': counts,
+        'checks': checks,
+        'message': 'RC5-14 업로드 전 최종 점검입니다. ok가 true이면 GitHub/Railway 배포 준비 상태입니다.'
+    }
+
+
+@app.get('/api/rc5-15/status')
+def rc5_15_status():
+    """RC5-15: 배포 직전 GitHub/Railway 실행 안정성 점검."""
+    checks = []
+    counts = {}
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': str(detail)[:500]})
+
+    required_files = [
+        ('start.py', BASE / 'start.py'),
+        ('requirements.txt', BASE / 'requirements.txt'),
+        ('runtime.txt', BASE / 'runtime.txt'),
+        ('railway.json', BASE / 'railway.json'),
+        ('Procfile', BASE / 'Procfile'),
+        ('Dockerfile', BASE / 'Dockerfile'),
+        ('.env.example', BASE / '.env.example'),
+        ('.gitignore', BASE / '.gitignore'),
+        ('frontend/index.html', FRONT / 'index.html'),
+        ('frontend/app.js', FRONT / 'app.js'),
+        ('frontend/style.css', FRONT / 'style.css'),
+    ]
+    for name, path in required_files:
+        add(f'file:{name}', path.exists(), path)
+
+    # Railway/Render에서 가장 자주 나는 문제: PORT 미사용, 시작 명령 불일치, 로컬 주소 하드코딩
+    try:
+        start_text = (BASE / 'start.py').read_text(encoding='utf-8')
+        add('start_uses_port_env', 'PORT' in start_text and '0.0.0.0' in start_text, 'start.py must bind 0.0.0.0:$PORT')
+    except Exception as e:
+        add('start_uses_port_env', False, str(e))
+
+    try:
+        railway_text = (BASE / 'railway.json').read_text(encoding='utf-8')
+        add('railway_start_command_ready', 'python start.py' in railway_text or 'start.py' in railway_text, railway_text[:200])
+    except Exception as e:
+        add('railway_start_command_ready', False, str(e))
+
+    try:
+        app_js = (FRONT / 'app.js').read_text(encoding='utf-8')
+        login_js = (FRONT / 'login.js').read_text(encoding='utf-8') if (FRONT / 'login.js').exists() else ''
+        hardcoded = []
+        for token in ('localhost:', '127.0.0.1:', 'http://localhost', 'http://127.0.0.1'):
+            if token in app_js or token in login_js:
+                hardcoded.append(token)
+        add('frontend_no_localhost_api', not hardcoded, ', '.join(hardcoded) if hardcoded else 'clean')
+    except Exception as e:
+        add('frontend_no_localhost_api', False, str(e))
+
+    add('database_dir_ready', DB_DIR.exists() and os.access(str(DB_DIR), os.W_OK), DB_DIR)
+    add('export_dir_ready', EXPORT_DIR.exists() and os.access(str(EXPORT_DIR), os.W_OK), EXPORT_DIR)
+    add('db_engine_valid', DB_ENGINE in ('sqlite', 'postgresql'), DB_ENGINE)
+
+    required_tables = ['admins', 'members', 'recommendations', 'sms_logs', 'winning_checks', 'draws', 'settings', 'admin_logs']
+    try:
+        with con() as c:
+            for table in required_tables:
+                try:
+                    row = c.execute(f'SELECT COUNT(*) c FROM {table}').fetchone()
+                    counts[table] = int(row['c'] if hasattr(row, 'keys') else row[0])
+                    add(f'table:{table}', True, f'{counts[table]} rows')
+                except Exception as e:
+                    counts[table] = 0
+                    add(f'table:{table}', False, str(e))
+    except Exception as e:
+        add('database_connection', False, str(e))
+
+    blocked = []
+    secret_files = []
+    backup_files = []
+    large_files = []
+    for root, dirs, files in os.walk(BASE):
+        rel_root = os.path.relpath(root, BASE)
+        parts = set(rel_root.split(os.sep))
+        if '.git' in parts:
+            continue
+        for d in list(dirs):
+            if d in ('__pycache__', '.pytest_cache', '.mypy_cache'):
+                blocked.append(os.path.join(rel_root, d))
+        for f in files:
+            p = os.path.join(rel_root, f)
+            fp = Path(root) / f
+            if f.endswith(('.pyc', '.pyo', '.tmp')):
+                blocked.append(p)
+            if f in ('.env', 'env.txt'):
+                secret_files.append(p)
+            if f.endswith(('.bak', '.backup', '.old')) or 'backup' in f.lower():
+                backup_files.append(p)
+            try:
+                if fp.stat().st_size > 20 * 1024 * 1024:
+                    large_files.append(p)
+            except Exception:
+                pass
+    add('no_python_cache_files', len(blocked) == 0, ', '.join(blocked[:10]) if blocked else 'clean')
+    add('no_secret_env_files', len(secret_files) == 0, ', '.join(secret_files[:10]) if secret_files else 'clean')
+    add('no_backup_artifacts', len(backup_files) == 0, ', '.join(backup_files[:10]) if backup_files else 'clean')
+    add('no_large_artifacts_over_20mb', len(large_files) == 0, ', '.join(large_files[:10]) if large_files else 'clean')
+
+    return {
+        'ok': all(x['ok'] for x in checks),
+        'app': APP_VERSION,
+        'rc_version': RC_VERSION,
+        'time': now(),
+        'db_engine': DB_ENGINE,
+        'database_url_set': bool(DATABASE_URL),
+        'paths': {'base': str(BASE), 'db_dir': str(DB_DIR), 'export_dir': str(EXPORT_DIR)},
+        'counts': counts,
+        'checks': checks,
+        'message': 'RC5-15 배포 직전 안정성 점검입니다. ok가 true이면 GitHub/Railway 업로드 준비 상태입니다.'
     }
 
 @app.get('/api/persistence_status')
