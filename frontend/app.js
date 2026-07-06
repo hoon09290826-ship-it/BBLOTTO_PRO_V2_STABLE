@@ -801,8 +801,8 @@ function switchAdminPanel(panel){
   document.querySelectorAll('.admin-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.adminPanel===panel));
   document.querySelectorAll('[data-admin-panel-box]').forEach(box=>box.classList.toggle('active', box.dataset.adminPanelBox===panel));
 }
-function openAdminCreateModal(){ const m=$('adminCreateModal'); if(m) m.style.display='flex'; setTimeout(()=>$('newAdmin')?.focus(),30); }
-function closeAdminCreateModal(){ const m=$('adminCreateModal'); if(m) m.style.display='none'; }
+function openAdminCreateModal(){ const m=$('adminCreateModal'); if(m){ m.style.display='flex'; m.removeAttribute('aria-hidden'); } setTimeout(()=>$('newAdmin')?.focus(),30); }
+function closeAdminCreateModal(){ const m=$('adminCreateModal'); if(m){ m.style.display='none'; m.setAttribute('aria-hidden','true'); } }
 window.openAdminCreateModal=openAdminCreateModal;
 window.closeAdminCreateModal=closeAdminCreateModal;
 
@@ -1281,6 +1281,15 @@ function bind(){
         e.preventDefault(); switchAdminPanel(btn.dataset.adminPanel || 'admins'); return;
       }
     }, true);
+    document.addEventListener('pointerdown', function(e){
+      const el=e.target && e.target.closest ? e.target.closest('#closeAdminModal,#cancelAdminModal,#addAdmin,#openAdminModal,.admin-tab-btn') : null;
+      if(!el) return;
+      const id=el.id||'';
+      if(id==='openAdminModal'){ e.preventDefault(); openAdminCreateModal(); return; }
+      if(id==='closeAdminModal' || id==='cancelAdminModal'){ e.preventDefault(); closeAdminCreateModal(); return; }
+      if(id==='addAdmin'){ e.preventDefault(); safe(addAdmin)(); return; }
+      if(el.classList && el.classList.contains('admin-tab-btn')){ e.preventDefault(); switchAdminPanel(el.dataset.adminPanel || 'admins'); return; }
+    }, true);
     document.addEventListener('keydown', function(e){
       if(e.key==='Escape') closeAdminCreateModal();
     });
@@ -1295,7 +1304,19 @@ function bind(){
 
 async function init(){
   if(!token()){ location.href='/'; return; }
-  bind(); api('/api/me').then(me=>{currentAdmin=me; setText('who', me.name || me.username || '관리자'); startSessionWatcher(me);}).catch(()=>setText('who','관리자'));
+  bind();
+  try{
+    // RC5.3 FIX: 관리자 권한을 먼저 확정한 뒤 화면을 불러온다.
+    // 이전 버전은 /api/me 응답 전에 loadAdmin()이 실행되어 최고관리자도
+    // 생성/수정 버튼이 disabled 상태로 남는 문제가 있었다.
+    currentAdmin = await api('/api/me');
+    setText('who', currentAdmin.name || currentAdmin.username || '관리자');
+    startSessionWatcher(currentAdmin);
+    applyAdminVisibility(!!currentAdmin?.is_super_admin);
+  }catch(e){
+    console.error(e);
+    setText('who','관리자');
+  }
   try{
     await Promise.all([loadDashboard(), loadMembers(), loadTemplate(), loadStats(100), loadDraws(), setNextDrawRound()]);
     const restored = restoreWorkspaceState() || await restoreLatestRecommendationFromServer();

@@ -164,3 +164,9 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 
 /* RC5.2 admin modal click fix */
 .modal-backdrop,.modal-card,.modal-card button,.modal-card input{pointer-events:auto!important;}
+
+/* RC5.3 관리자 모달 버튼 완전 복구 */
+.modal-backdrop{z-index:90000!important;pointer-events:auto!important;}
+.modal-card{position:relative!important;z-index:90001!important;pointer-events:auto!important;}
+.modal-card *{pointer-events:auto!important;}
+.modal-card button:not(:disabled){cursor:pointer!important;}
