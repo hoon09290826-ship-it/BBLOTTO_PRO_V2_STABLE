@@ -38,3 +38,9 @@ python start.py
 2. Railway에서 `New Project → Deploy from GitHub repo`를 선택합니다.
 3. PostgreSQL을 붙일 경우 Railway Variables에 `DATABASE_URL`이 자동 연결되어 있는지 확인합니다.
 4. 배포 완료 후 `/api/health`가 `ok: true`로 나오면 정상입니다.
+
+
+## RC5-13 배포 점검
+- `/api/health` 기본 서버 상태 확인
+- `/api/rc5-13/status` GitHub/Railway 업로드 전 최종 진단
+- GitHub에는 `.env`, `__pycache__`, `.pyc`, 백업 DB를 올리지 마세요.

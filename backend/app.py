@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-RC_VERSION = 'RC5-12_DEPLOY_STABILITY'
+RC_VERSION = 'RC5-13_RELEASE_GUARD'
 APP_VERSION = 'BBLOTTO PRO V2 STABLE'
 app = FastAPI(title=f'{APP_VERSION} {RC_VERSION}')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
@@ -1354,6 +1354,72 @@ def rc5_12_status():
         'counts': {'members': member_count, 'admins': admin_count},
         'checks': checks,
         'next': '회원검색은 /api/members?q=검색어 로 진단할 수 있습니다.'
+    }
+
+
+@app.get('/api/rc5-13/status')
+def rc5_13_status():
+    """RC5-13: GitHub/Railway 배포 전 최종 진단 및 핵심 테이블 상태 점검."""
+    checks = []
+    counts = {}
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': str(detail)})
+
+    required_files = [
+        ('start.py', BASE / 'start.py'),
+        ('requirements.txt', BASE / 'requirements.txt'),
+        ('runtime.txt', BASE / 'runtime.txt'),
+        ('frontend/index.html', FRONT / 'index.html'),
+        ('frontend/app.js', FRONT / 'app.js'),
+        ('frontend/login.html', FRONT / 'login.html'),
+        ('frontend/login.js', FRONT / 'login.js'),
+    ]
+    for name, path in required_files:
+        add(f'file:{name}', path.exists(), path)
+
+    add('database_dir_writable', DB_DIR.exists() and os.access(str(DB_DIR), os.W_OK), DB_DIR)
+    add('export_dir_writable', EXPORT_DIR.exists() and os.access(str(EXPORT_DIR), os.W_OK), EXPORT_DIR)
+    add('db_engine_ready', DB_ENGINE in ('sqlite', 'postgresql'), DB_ENGINE)
+
+    required_tables = ['admins', 'members', 'recommendations', 'sms_logs', 'winning_checks', 'draws', 'settings', 'admin_logs']
+    try:
+        with con() as c:
+            for table in required_tables:
+                try:
+                    row = c.execute(f'SELECT COUNT(*) c FROM {table}').fetchone()
+                    counts[table] = int(row['c'] if hasattr(row, 'keys') else row[0])
+                    add(f'table:{table}', True, f'{counts[table]} rows')
+                except Exception as e:
+                    counts[table] = 0
+                    add(f'table:{table}', False, str(e)[:180])
+    except Exception as e:
+        add('database_connection', False, str(e)[:180])
+
+    # GitHub에 올리면 안 되는 산출물/캐시가 남아있는지 간단 점검
+    blocked = []
+    for root, dirs, files in os.walk(BASE):
+        rel_root = os.path.relpath(root, BASE)
+        if '.git' in rel_root.split(os.sep):
+            continue
+        for d in list(dirs):
+            if d == '__pycache__':
+                blocked.append(os.path.join(rel_root, d))
+        for f in files:
+            if f.endswith(('.pyc', '.pyo', '.bak', '.tmp')):
+                blocked.append(os.path.join(rel_root, f))
+    add('github_clean_cache', len(blocked) == 0, ', '.join(blocked[:10]) if blocked else 'clean')
+
+    return {
+        'ok': all(x['ok'] for x in checks),
+        'app': APP_VERSION,
+        'rc_version': RC_VERSION,
+        'time': now(),
+        'db_engine': DB_ENGINE,
+        'database_url_set': bool(DATABASE_URL),
+        'paths': {'base': str(BASE), 'db_dir': str(DB_DIR), 'export_dir': str(EXPORT_DIR)},
+        'counts': counts,
+        'checks': checks,
+        'message': 'RC5-13 배포 전 최종 점검입니다. ok가 true이면 GitHub/Railway 업로드 준비 상태입니다.'
     }
 
 @app.get('/api/persistence_status')
