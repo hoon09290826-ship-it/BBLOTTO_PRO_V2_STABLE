@@ -5716,6 +5716,8 @@ def _engine_summary(details, st):
     }
 
 def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
+    """회원용 3~5줄 분석 문구. 개발자/엔진명 문구는 노출하지 않고, 생성 결과에 따라 문장 조합이 달라지도록 구성합니다."""
+    import hashlib
     details = details or []
     engine = _engine_summary(details, st)
     grade = engine.get('member_grade') or rc45_grade_label(st.get('member_grade'))
@@ -5725,18 +5727,79 @@ def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
         for n in d.get('numbers', []):
             if n not in top_nums:
                 top_nums.append(n)
-    hot = (st.get('hot300') or st.get('hot') or [])[:6]
-    overdue = (st.get('overdue300') or st.get('overdue') or [])[:6]
+    hot = (st.get('hot300') or st.get('hot') or [])[:8]
+    overdue = (st.get('overdue300') or st.get('overdue') or [])[:8]
     mode_name = {'balanced': '균형형', 'aggressive': '공격형', 'conservative': '안정형'}.get(mode, mode or '균형형')
-    grade_phrase = {'1등':'상위 관리', '2등':'집중 관리', '일반':'기본 관리'}.get(grade, '기본 관리')
-    core_text = ', '.join(map(str, top_nums[:6])) if top_nums else '분산 후보군'
+    core_text = ', '.join(map(str, top_nums[:6])) if top_nums else '주요 후보군'
     hot_text = ', '.join(map(str, hot[:4])) if hot else '최근 흐름 번호'
     sub_text = ', '.join(map(str, overdue[:4])) if overdue else '보강 후보 번호'
-    lines = [
-        f'{round_no}회차는 최근 당첨 흐름과 누적 통계를 함께 비교해 {grade_phrase} 기준에 맞는 조합으로 선별했습니다.',
-        f'주요 후보는 {core_text}이며, 최근 흐름 번호({hot_text})와 보강 후보({sub_text})를 균형 있게 반영했습니다.',
-        f'{mode_name} 조합 기준으로 홀짝, 번호 구간, 끝수 분포와 반복 패턴을 조정해 한쪽으로 치우치지 않게 구성했습니다.',
-        '이전 회차와 유사한 조합은 줄이고, 전체 조합 간 중복률을 낮춰 안정성과 다양성을 함께 높였습니다.'
+    combos = [d.get('numbers', []) for d in details if d.get('numbers')]
+    flat = [int(n) for c in combos for n in c if str(n).isdigit()]
+    low = sum(1 for n in flat if 1 <= n <= 15); mid = sum(1 for n in flat if 16 <= n <= 30); high = sum(1 for n in flat if 31 <= n <= 45)
+    odd = sum(1 for n in flat if n % 2 == 1); even = len(flat) - odd
+    focus = []
+    if mode == 'conservative': focus.append('안정형')
+    elif mode == 'aggressive': focus.append('공격형')
+    else: focus.append('균형형')
+    if hot: focus.append('최근흐름')
+    if overdue: focus.append('보강후보')
+    if abs(odd-even) <= max(2, len(flat)//8): focus.append('홀짝균형')
+    if max(low, mid, high) - min(low, mid, high) <= max(2, len(flat)//10): focus.append('구간분산')
+
+    seed_src = f"{round_no}|{mode}|{grade}|{core_text}|{hot_text}|{sub_text}|{sum(flat)}|{len(details)}"
+    seed = int(hashlib.sha256(seed_src.encode('utf-8')).hexdigest()[:12], 16)
+    def pick(arr, salt=0):
+        return arr[(seed + salt) % len(arr)]
+
+    openers = {
+        '균형형': [
+            f'{round_no}회차는 최근 흐름과 누적 데이터를 함께 비교해 안정적인 분포의 조합으로 구성했습니다.',
+            f'{round_no}회차는 특정 번호대에 치우치지 않도록 전체 흐름을 기준으로 조합을 선별했습니다.',
+            f'이번 회차는 최근 당첨 흐름과 장기 통계를 함께 반영해 균형 중심으로 구성했습니다.',
+            f'번호 분포와 최근 출현 흐름을 함께 검토해 {round_no}회차 추천 조합을 구성했습니다.'
+        ],
+        '안정형': [
+            f'{round_no}회차는 과도한 변동보다 안정적인 번호 흐름을 우선해 조합을 선별했습니다.',
+            f'이번 회차는 최근 흐름 안에서 무리한 편중을 줄이고 안정성을 높이는 방향으로 구성했습니다.',
+            f'{round_no}회차는 누적 통계와 반복 패턴을 함께 살펴 안정적인 조합을 중심으로 선별했습니다.'
+        ],
+        '공격형': [
+            f'{round_no}회차는 최근 흐름 변화가 큰 구간을 함께 반영해 적극적인 조합으로 구성했습니다.',
+            f'이번 회차는 출현 가능성이 높아진 후보를 중심으로 변화를 준 조합을 선별했습니다.',
+            f'{round_no}회차는 최근 강세 번호와 보강 후보를 함께 반영해 흐름 전환 가능성을 고려했습니다.'
+        ]
+    }
+    middles = [
+        f'주요 후보는 {core_text}이며, 최근 흐름 번호와 보강 후보를 함께 배분했습니다.',
+        f'최근 흐름 번호({hot_text})와 보강 후보({sub_text})를 조합해 한쪽으로 쏠리지 않게 맞췄습니다.',
+        f'핵심 후보군은 {core_text} 중심이며, 전체 조합 간 중복 가능성을 낮추는 방향으로 정리했습니다.',
+        f'번호별 출현 흐름을 비교해 {hot_text} 계열과 {sub_text} 계열을 균형 있게 반영했습니다.',
+        '최근 반복된 패턴은 일부만 반영하고, 새롭게 움직일 가능성이 있는 번호를 함께 보강했습니다.',
+        '당첨 흐름이 강한 번호와 장기적으로 보강이 필요한 번호를 나누어 조합에 배치했습니다.'
     ]
-    return '\n'.join(lines[:4])
+    balances = [
+        '홀짝 비율과 저·중·고 구간 분포를 함께 맞춰 전체적인 안정성을 높였습니다.',
+        '끝수 흐름과 번호 간 간격을 함께 확인해 비슷한 형태의 조합이 반복되지 않도록 조정했습니다.',
+        '연속수와 반복 패턴은 필요한 범위 안에서만 반영해 조합 간 차이를 살렸습니다.',
+        '구간 분산과 번호 간 연결성을 함께 고려해 조합별 완성도를 높였습니다.',
+        '최근 회차와 지나치게 유사한 구성은 줄이고, 조합별 다양성을 확보했습니다.',
+        f'{mode_name} 기준에 맞춰 번호대, 끝수, 반복 흐름을 함께 점검했습니다.'
+    ]
+    closers = [
+        '전체적으로 최근 데이터와 누적 통계를 함께 고려한 심층 추천 결과입니다.',
+        '이번 추천은 안정성과 변화 가능성을 함께 반영한 구성입니다.',
+        '단순 빈도보다 번호 간 균형과 최근 흐름을 함께 본 추천입니다.',
+        '회원별 추천 이력과 중복 가능성까지 고려해 최종 조합을 정리했습니다.',
+        '최근 흐름을 유지하면서도 새로운 출현 가능성을 함께 고려했습니다.'
+    ]
+    opener_pool = openers.get(focus[0], openers['균형형'])
+    lines = [pick(opener_pool, 1), pick(middles, 7), pick(balances, 13)]
+    if (seed % 3) != 0:
+        lines.append(pick(closers, 19))
+    # 3~4줄 유지, 중복 문장 제거
+    clean = []
+    for line in lines:
+        if line and line not in clean:
+            clean.append(line)
+    return '\n'.join(clean[:4])
 # ===================== /RC4-5 DEEP RECOMMEND ENGINE =====================

@@ -293,16 +293,51 @@ function buildFallbackAnalysis(combos, stats, mode){
   const sums = combos.map(c=>c.reduce((a,b)=>a+Number(b),0));
   const avgSum = Math.round(sums.reduce((a,b)=>a+b,0)/sums.length);
   const odds = combos.map(c=>c.filter(n=>Number(n)%2).length);
-  const avgOdd = (odds.reduce((a,b)=>a+b,0)/odds.length).toFixed(1);
+  const avgOdd = (odds.reduce((a,b)=>a+b,0)/odds.length);
   const hot = stats?.hot?.slice?.(0,4) || [];
   const cold = stats?.cold?.slice?.(0,4) || [];
   const modeText = {balanced:'균형형',conservative:'안정형',aggressive:'공격형'}[mode] || mode || '균형형';
-  return [
-    `이번 회차는 최근 당첨 흐름과 누적 통계를 함께 비교해 ${modeText} 조합으로 선별했습니다.`,
-    `주요 후보는 ${core.join(', ')}이며, 평균 합계 ${avgSum}와 홀짝 흐름 ${avgOdd}: ${Math.max(0, (6-Number(avgOdd))).toFixed(1)} 기준을 함께 반영했습니다.`,
-    hot.length ? `최근 흐름 번호(${hot.join(', ')})와 보강 후보(${cold.join(', ')})를 균형 있게 섞어 편중을 줄였습니다.` : `번호 구간, 끝수 분포와 반복 패턴을 조정해 한쪽으로 치우치지 않게 구성했습니다.`,
-    `이전 회차와 유사한 조합은 줄이고, 조합 간 중복률을 낮춰 안정성과 다양성을 함께 높였습니다.`
-  ].join('\n');
+  const seed = Math.abs(flat.reduce((a,b,i)=>a + b*(i+3), 0) + Math.round(avgSum*7) + Math.round(avgOdd*11));
+  const pick=(arr,salt=0)=>arr[(seed+salt)%arr.length];
+  const openers = {
+    balanced:[
+      '이번 회차는 최근 흐름과 누적 데이터를 함께 비교해 안정적인 분포의 조합으로 구성했습니다.',
+      '특정 번호대에 치우치지 않도록 전체 흐름을 기준으로 추천 조합을 선별했습니다.',
+      '최근 당첨 흐름과 장기 통계를 함께 반영해 균형 중심으로 구성했습니다.'
+    ],
+    conservative:[
+      '이번 회차는 과도한 변동보다 안정적인 번호 흐름을 우선해 조합을 선별했습니다.',
+      '최근 흐름 안에서 무리한 편중을 줄이고 안정성을 높이는 방향으로 구성했습니다.',
+      '누적 통계와 반복 패턴을 함께 살펴 안정적인 조합을 중심으로 선별했습니다.'
+    ],
+    aggressive:[
+      '최근 흐름 변화가 큰 구간을 함께 반영해 적극적인 조합으로 구성했습니다.',
+      '출현 가능성이 높아진 후보를 중심으로 변화를 준 조합을 선별했습니다.',
+      '최근 강세 번호와 보강 후보를 함께 반영해 흐름 전환 가능성을 고려했습니다.'
+    ]
+  };
+  const middles = [
+    `주요 후보는 ${core.join(', ')}이며, 최근 흐름과 보강 후보를 함께 배분했습니다.`,
+    hot.length ? `최근 흐름 번호(${hot.join(', ')})와 보강 후보(${cold.join(', ')})를 조합해 편중을 줄였습니다.` : `평균 합계 ${avgSum}와 홀짝 흐름을 함께 확인해 조합 균형을 맞췄습니다.`,
+    `핵심 후보군은 ${core.join(', ')} 중심이며, 전체 조합 간 중복 가능성을 낮췄습니다.`,
+    '최근 반복된 패턴은 일부만 반영하고, 새롭게 움직일 가능성이 있는 번호를 함께 보강했습니다.'
+  ];
+  const balances = [
+    '홀짝 비율과 저·중·고 구간 분포를 함께 맞춰 전체적인 안정성을 높였습니다.',
+    '끝수 흐름과 번호 간 간격을 확인해 비슷한 형태의 조합 반복을 줄였습니다.',
+    '연속수와 반복 패턴은 필요한 범위 안에서만 반영해 조합 간 차이를 살렸습니다.',
+    `${modeText} 기준에 맞춰 번호대, 끝수, 반복 흐름을 함께 점검했습니다.`
+  ];
+  const closers = [
+    '전체적으로 최근 데이터와 누적 통계를 함께 고려한 심층 추천 결과입니다.',
+    '이번 추천은 안정성과 변화 가능성을 함께 반영한 구성입니다.',
+    '단순 빈도보다 번호 간 균형과 최근 흐름을 함께 본 추천입니다.',
+    '최근 흐름을 유지하면서도 새로운 출현 가능성을 함께 고려했습니다.'
+  ];
+  const openerPool = openers[mode] || openers.balanced;
+  const lines = [pick(openerPool,1), pick(middles,5), pick(balances,9)];
+  if(seed % 3 !== 0) lines.push(pick(closers,13));
+  return [...new Set(lines)].slice(0,4).join('\n');
 }
 
 function buildMemberMessage(member, round, combos, analysis){
@@ -338,12 +373,6 @@ function renderEngine(engine, details=[]){
     <span><b>${top || '-'}</b><small>최고 점수</small></span>
     <span><b>${min || '-'}</b><small>최저 점수</small></span>
     <span><b>${filter || '-'}</b><small>최종 선별</small></span>
-  </div>
-  <div class="ai-pipeline-card">
-    <b>BBLOTTO AI Engine V1.0</b>
-    <p>${esc(pipeline)}</p>
-    <div class="mini-stats"><span>1차 후보 ${esc(stage1)}</span><span>상위500 ${esc(stage2)}</span><span>상위100 ${esc(stage3)}</span></div>
-    <small>${esc(v2.summary || '최근 100회 통계와 포트폴리오 분산을 함께 적용했습니다.')}</small>
   </div>`;
 }
 
