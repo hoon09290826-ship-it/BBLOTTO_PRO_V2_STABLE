@@ -5806,7 +5806,7 @@ def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
 
 # ===================== RC5-5 RECOMMEND ENGINE UPGRADE =====================
 # 추천번호 생성 품질 강화: 등급별 후보 강도, 최근 추천 중복 방지, 조합별 다양성 강화.
-RC55_ENGINE_VERSION = 'RC5-5_DEEP_RECOMMEND_UPGRADE'
+RC55_ENGINE_VERSION = 'RC5-6_FAST_RECOMMEND_ENGINE'
 
 def _rc55_recent_recommendation_combos(member_id=None, limit=180):
     """최근 생성 이력에서 추천 조합을 가져와 동일/유사 조합 반복을 줄입니다."""
@@ -5873,21 +5873,24 @@ def _rc55_combo_quality_bonus(combo, st, ext, usage=None, member_grade='일반')
     return bonus
 
 def _rc55_grade_params(grade='일반'):
+    # RC5-6 FAST: 후보군을 수천~만개까지 무조건 쌓던 방식에서
+    # 화면 응답 속도를 우선하는 선별 후보 방식으로 낮췄습니다.
+    # 품질은 등급별 가중치/포트폴리오 재정렬로 유지하고 DB/통계 재계산은 1회만 사용합니다.
     g = rc45_grade_label(grade)
     if g == '1등':
         return {
-            'base': 12000, 'mult': 1050, 'tries': 36,
+            'base': 1800, 'mult': 180, 'tries': 12,
             'first': (2, 1, 3, 1), 'second': (3, 1, 3, 2), 'third': (4, 2, 3, 3),
             'history_overlap': 4, 'hot_boost': 2.4, 'overdue_boost': 1.6, 'mid_boost': 0.9,
         }
     if g == '2등':
         return {
-            'base': 9000, 'mult': 820, 'tries': 30,
+            'base': 1400, 'mult': 145, 'tries': 10,
             'first': (3, 1, 3, 1), 'second': (4, 2, 3, 2), 'third': (5, 2, 4, 3),
             'history_overlap': 4, 'hot_boost': 1.8, 'overdue_boost': 1.25, 'mid_boost': 0.6,
         }
     return {
-        'base': 7000, 'mult': 640, 'tries': 26,
+        'base': 1000, 'mult': 120, 'tries': 9,
         'first': (4, 2, 4, 2), 'second': (5, 2, 4, 3), 'third': (6, 3, 4, 4),
         'history_overlap': 5, 'hot_boost': 1.25, 'overdue_boost': 0.9, 'mid_boost': 0.35,
     }
@@ -5970,7 +5973,7 @@ def make_premium_combos(count=10, fixed='', excluded='', mode='balanced', member
     seen = set()
     tries = 0
     needed = max(gp['base'], target * gp['mult'])
-    max_tries = max(140000, needed * gp['tries'])
+    max_tries = max(9000, needed * gp['tries'])
     while len(candidates) < needed and tries < max_tries:
         tries += 1
         nums = set(fixed_set)
@@ -6041,7 +6044,7 @@ def make_premium_combos(count=10, fixed='', excluded='', mode='balanced', member
                 break
 
     details = [_rc42_detail(c, st, mode, ext, profile) for c in selected[:target]]
-    # 실제 최종 점수도 RC5-5 기준으로 재보정
+    # 실제 최종 점수도 RC5-6 빠른 엔진 기준으로 재보정
     for d in details:
         nums = d.get('numbers') or []
         score = float(d.get('score') or 0) + _rc55_combo_quality_bonus(nums, st, ext, recent_usage, member_grade)
@@ -6082,7 +6085,7 @@ def _engine_summary(details, st):
     return {
         'version': RC55_ENGINE_VERSION,
         'engine_version': RC55_ENGINE_VERSION,
-        'phase': 'RC5-5',
+        'phase': 'RC5-6',
         'member_grade': grade,
         'grade_strength': rc45_grade_strength_text(grade),
         'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
@@ -6092,7 +6095,7 @@ def _engine_summary(details, st):
         'selected_count': len(details or []),
         'latest_round': st.get('latest_round') or 0,
         'rc55_report': {
-            'grade_policy': '1등/2등/일반 등급별 후보군과 선별 강도 차등',
+            'grade_policy': '1등/2등/일반 등급별 후보군과 선별 강도 차등 · 빠른 후보 선별',
             'portfolio': st.get('rc42_portfolio') or {},
             'summary': '최근 추천 이력과 유사한 조합을 줄이고 분산형 후보를 우선 선별했습니다.'
         },
