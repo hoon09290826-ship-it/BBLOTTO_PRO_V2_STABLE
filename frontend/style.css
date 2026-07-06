@@ -177,7 +177,12 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 #adminCreateModal[aria-hidden="true"]{display:none!important;}
 #adminCreateModal .modal-card,#adminCreateModal button,#adminCreateModal input{pointer-events:auto!important;position:relative;z-index:100001;}
 
-
-/* RC5-7 pagination */
-.list-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px;flex-wrap:wrap}.list-topbar>strong{color:#ffe37a;font-size:16px}
-.bb-pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid rgba(212,175,55,.18);border-radius:14px;background:rgba(0,0,0,.22);flex-wrap:wrap}.bb-pagination .page-info{color:#cfc3a5;font-size:13px;font-weight:800}.bb-pagination .page-info b{color:#ffe37a}.page-size-select{width:auto;min-width:100px;background:#111;border:1px solid rgba(212,175,55,.28);color:#f4e3ae;border-radius:10px;padding:8px 10px;font-weight:900}.page-buttons{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.page-buttons button{min-width:34px;height:34px;padding:0 9px;border-radius:10px;border:1px solid rgba(212,175,55,.24);background:rgba(255,255,255,.04);color:#f1dfaa;font-weight:900}.page-buttons button.active,.page-buttons button:hover:not(:disabled){background:linear-gradient(135deg,#d4af37,#8d6814);color:#0b0903}.page-buttons button:disabled{opacity:.35;cursor:not-allowed}.paged-draw-list{display:grid;gap:6px}.recent-draws-100{display:grid;gap:6px}.draw-row{display:grid;grid-template-columns:76px 1fr auto;gap:10px;align-items:center;border:1px solid rgba(212,175,55,.12);border-radius:12px;padding:9px 10px;background:rgba(255,255,255,.025)}.draw-row b{color:#ffe37a}.draw-row small{color:#bdb39a}.win-member-list + .bb-pagination{margin-top:14px}@media(max-width:760px){.bb-pagination{align-items:stretch;flex-direction:column}.page-size-select{width:100%}.page-buttons{justify-content:center}.draw-row{grid-template-columns:1fr}.list-topbar{display:block}.list-topbar .bb-pagination{margin-top:8px}}
+/* V3 FINAL Sprint 1: pagination/search compact UI */
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid rgba(212,175,55,.18)}
+.pager-info{color:#c9b56d;font-size:12px}
+.pager-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pager-actions select,.pager-actions button{height:32px;border-radius:10px;border:1px solid rgba(212,175,55,.28);background:#141414;color:#f5e7ad;padding:0 10px}
+.pager-actions button:disabled{opacity:.35;cursor:not-allowed}
+.pager-actions .page-btn.active{background:#d4af37;color:#111;font-weight:800}
+.draw-page-list p{margin:8px 0;padding:8px 10px;border:1px solid rgba(212,175,55,.14);border-radius:10px;background:rgba(255,255,255,.025)}
+@media(max-width:720px){.pager{align-items:flex-start}.pager-actions{width:100%}.pager-actions button{flex:1;min-width:54px}.pager-actions select{width:100%}}
