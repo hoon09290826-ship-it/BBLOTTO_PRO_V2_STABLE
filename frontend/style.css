@@ -198,3 +198,10 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 
 /* RC5-11 member search status */
 .member-search-status{margin:6px 0 10px;color:#d4af37;font-weight:800}.pager button:disabled{opacity:.45;cursor:not-allowed}
+
+
+/* RC6-1 문자간다 CSV 내보내기 */
+.sms-export-panel{margin:14px 0 18px;padding:14px;border:1px solid rgba(212,175,55,.35);border-radius:12px;background:rgba(212,175,55,.06)}
+.sms-export-panel h3{margin:0 0 6px;color:#f4d35e;font-size:15px}
+.sms-export-panel small{display:block;margin-top:8px;color:#b8aa78;line-height:1.45}
+.btnrow.wrap{flex-wrap:wrap}

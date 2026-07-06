@@ -1215,6 +1215,69 @@ async function saveSmsLog(){
   catch(e){ await api('/api/sms',{method:'POST',body}); }
   toast('회원 안내 문구 이력을 저장했습니다.'); await loadDashboard();
 }
+
+
+function csvCell(value){
+  const s = String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+function downloadTextFile(filename, text, mime='text/csv;charset=utf-8;'){
+  const blob = new Blob(['\ufeff' + text], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 500);
+}
+function smsExportMembers(scope){
+  if(scope === 'selected'){
+    const m = getSelectedMember();
+    return m ? [m] : [];
+  }
+  return (membersCache || []).filter(m => String(m.status || '활성') !== '탈퇴' && normalizePhoneForSearch(m.phone || ''));
+}
+function buildSmsExportRows(scope='all'){
+  const members = smsExportMembers(scope);
+  if(!members.length) return [];
+  const combos = normalizeCombos(currentCombos);
+  const analysis = normalizeText(currentAnalysis || '').trim();
+  const round = currentRound || '';
+  return members.map(m=>{
+    const message = buildTemplateMessage(m, round, combos, analysis);
+    return {
+      name: m.name || '',
+      phone: String(m.phone || '').replace(/[^0-9]/g, ''),
+      message,
+      round,
+      numbers: formatComboLines(combos),
+      grade: m.grade || '',
+      status: m.status || '활성'
+    };
+  });
+}
+function downloadSmsCsv(scope='all'){
+  if(!normalizeCombos(currentCombos).length && !confirm('추천번호 생성 결과가 없습니다. 그래도 CSV를 만들까요?')) return;
+  const rows = buildSmsExportRows(scope);
+  if(!rows.length){ alert(scope === 'selected' ? '선택된 회원이 없거나 연락처가 없습니다.' : '발송용 회원 연락처가 없습니다.'); return; }
+  const header = ['이름','전화번호','문자내용','회차','추천번호','등급','상태'];
+  const csv = [header.map(csvCell).join(',')].concat(rows.map(r=>[r.name,r.phone,r.message,r.round,r.numbers,r.grade,r.status].map(csvCell).join(','))).join('\n');
+  const roundPart = currentRound ? `${currentRound}회차_` : '';
+  downloadTextFile(`BBLOTTO_${roundPart}문자간다_업로드_${scope==='selected'?'선택회원':'전체회원'}.csv`, csv);
+  setText('smsExportInfo', `${rows.length}명 발송용 CSV 생성 완료 · 문자간다 대량등록에 업로드하세요.`);
+  toast(`문자 발송용 CSV ${rows.length}건 생성 완료`);
+}
+function copyBulkSmsText(){
+  const rows = buildSmsExportRows('all');
+  if(!rows.length){ alert('복사할 회원 연락처가 없습니다.'); return; }
+  const text = rows.map(r=>`${r.phone}\t${r.message}`).join('\n\n');
+  navigator.clipboard?.writeText(text);
+  setText('smsExportInfo', `${rows.length}명 문자내용을 클립보드에 복사했습니다.`);
+  toast('전체 회원 문자 내용을 복사했습니다.');
+}
+
 async function checkWinning(){
   // PHASE20: 회차/당첨번호 확인을 백엔드 자동화에 맡깁니다.
   // 번호가 비어 있으면 해당 회차 공식 번호를 자동 조회하고, 아직 공개 전이면 안내 메시지를 받습니다.
@@ -1435,6 +1498,9 @@ function bind(){
   $('copySms')?.addEventListener('click',()=>{navigator.clipboard?.writeText($('smsPreview')?.value||currentSms); toast('회원 안내 문구를 복사했습니다.');});
   $('sendSmsBtn')?.addEventListener('click',()=>{refreshSmsPreview(); scrollToMessagePanel(); $('smsPreview')?.focus();});
   $('saveSmsLog')?.addEventListener('click',safe(saveSmsLog));
+  $('exportSmsCsvAll')?.addEventListener('click',()=>downloadSmsCsv('all'));
+  $('exportSmsCsvSelected')?.addEventListener('click',()=>downloadSmsCsv('selected'));
+  $('copySmsBulk')?.addEventListener('click',copyBulkSmsText);
   $('checkWinning')?.addEventListener('click',safe(checkWinning));
   $('saveDraw')?.addEventListener('click',safe(saveDraw));
   $('addAdmin')?.addEventListener('click',safe(addAdmin));

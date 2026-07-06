@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-RC_VERSION = 'RC5-15_PRE_RELEASE_GUARD'
+RC_VERSION = 'RC5-16_SECURITY_CLEANUP'
 APP_VERSION = 'BBLOTTO PRO V2 STABLE'
 app = FastAPI(title=f'{APP_VERSION} {RC_VERSION}')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
@@ -452,7 +452,12 @@ def init_db():
             c.execute('ALTER TABLE draws ADD COLUMN updated_at TEXT DEFAULT ""')
         c.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)')
         if c.execute('SELECT COUNT(*) FROM admins').fetchone()[0] == 0:
-            c.execute('INSERT INTO admins(username,name,password_hash,is_active,created_at) VALUES(?,?,?,?,?)', ('admin','대표 관리자',hash_password('admin1234'),1,now()))
+            init_username = os.getenv('BBLOTTO_ADMIN_USERNAME', 'admin').strip() or 'admin'
+            init_password = os.getenv('BBLOTTO_ADMIN_PASSWORD', '').strip()
+            if not init_password:
+                init_password = secrets.token_urlsafe(18)
+                print(f'[BBLOTTO][SECURITY] 초기 관리자 비밀번호가 자동 생성되었습니다. Railway/서버 로그에서 확인 후 즉시 변경하세요. username={init_username} password={init_password}')
+            c.execute('INSERT INTO admins(username,name,password_hash,is_active,created_at) VALUES(?,?,?,?,?)', (init_username,'대표 관리자',hash_password(init_password),1,now()))
         # 기본 당첨번호 DB는 비어 있을 때만 넣는 방식이 아니라, 누락 회차를 항상 보강합니다.
         # 그래서 기존 DB에 20회차만 남아 있어도 최근 100회 통계가 바로 동작합니다.
         for r,d,n,b in DEFAULT_DRAWS:
@@ -1609,6 +1614,58 @@ def rc5_15_status():
         'counts': counts,
         'checks': checks,
         'message': 'RC5-15 배포 직전 안정성 점검입니다. ok가 true이면 GitHub/Railway 업로드 준비 상태입니다.'
+    }
+
+
+@app.get('/api/rc5-16/status')
+def rc5_16_status():
+    """RC5-16: GitHub 보안/정리 상태 점검."""
+    checks = []
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': str(detail)[:500]})
+
+    for name in ['.gitignore', '.env.example', 'README.md', 'requirements.txt', 'start.py', 'Procfile', 'runtime.txt']:
+        add(f'file:{name}', (BASE / name).exists(), BASE / name)
+
+    cache_items, secret_items, db_items, backup_items = [], [], [], []
+    for root, dirs, files in os.walk(BASE):
+        rel_root = os.path.relpath(root, BASE)
+        if '.git' in set(rel_root.split(os.sep)):
+            continue
+        for d in dirs:
+            if d == '__pycache__':
+                cache_items.append(os.path.join(rel_root, d))
+        for f in files:
+            rel = os.path.join(rel_root, f)
+            low = f.lower()
+            if low.endswith(('.pyc', '.pyo', '.pyd')):
+                cache_items.append(rel)
+            if f == '.env' or f.startswith('.env.') and f != '.env.example':
+                secret_items.append(rel)
+            if low.endswith(('.db', '.sqlite', '.sqlite3')):
+                db_items.append(rel)
+            if low.endswith(('.bak', '.backup', '.old')) or 'backup' in low:
+                backup_items.append(rel)
+
+    add('no_python_cache', not cache_items, ', '.join(cache_items[:10]) if cache_items else 'clean')
+    add('no_env_secret_files', not secret_items, ', '.join(secret_items[:10]) if secret_items else 'clean')
+    add('no_database_files_in_repo', not db_items, ', '.join(db_items[:10]) if db_items else 'clean')
+    add('no_backup_artifacts', not backup_items, ', '.join(backup_items[:10]) if backup_items else 'clean')
+
+    try:
+        app_text = (BASE / 'backend' / 'app.py').read_text(encoding='utf-8')
+        add('no_admin1234_hardcode', 'admin1234' not in app_text, 'hardcoded admin password removed')
+        add('env_admin_password_supported', 'BBLOTTO_ADMIN_PASSWORD' in app_text, 'BBLOTTO_ADMIN_PASSWORD')
+    except Exception as e:
+        add('source_check', False, str(e))
+
+    return {
+        'ok': all(x['ok'] for x in checks),
+        'app': APP_VERSION,
+        'rc_version': RC_VERSION,
+        'time': now(),
+        'checks': checks,
+        'message': 'RC5-16 GitHub 보안/정리 점검입니다. ok가 true이면 업로드 안전 상태입니다.'
     }
 
 @app.get('/api/persistence_status')

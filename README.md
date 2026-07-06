@@ -67,3 +67,16 @@ python scripts/verify_release.py
 ```
 
 `/api/rc5-15/status`의 `ok`가 `true`이면 GitHub/Railway 업로드 구조, DB 기본 테이블, 캐시/임시파일 상태가 정상입니다.
+
+
+## RC5-16 GitHub 보안 정리
+
+GitHub에는 `.env`, 실제 운영 DB, 백업 DB, 캐시 파일을 올리지 않습니다.
+최초 관리자 계정은 환경변수로 설정하세요.
+
+```bash
+BBLOTTO_ADMIN_USERNAME=admin
+BBLOTTO_ADMIN_PASSWORD=원하는_강한_비밀번호
+```
+
+환경변수를 설정하지 않으면 최초 실행 시 임시 비밀번호가 서버 로그에 출력됩니다.
