@@ -37,6 +37,7 @@ function saveWorkspaceState(){
       currentCombos, currentDetails, currentSms, currentAnalysis, currentRound, currentRecId,
       selectedMemberId: $('genMember')?.value || '',
       template: $('template')?.value || '',
+      bulkSmsTemplate: $('bulkSmsTemplate')?.value || '',
       savedAt: new Date().toISOString()
     };
     localStorage.setItem(WORKSPACE_KEY, JSON.stringify(state));
@@ -56,6 +57,7 @@ function restoreWorkspaceState(){
     currentRecId = st.currentRecId || null;
     if(st.selectedMemberId && $('genMember')) $('genMember').value = st.selectedMemberId;
     if(!($('template')?.value) && st.template) setValue('template', normalizeText(st.template));
+    if(!($('bulkSmsTemplate')?.value) && st.bulkSmsTemplate) setValue('bulkSmsTemplate', normalizeText(st.bulkSmsTemplate));
     if(currentRound) setText('roundLabel', `${currentRound}회차 추천번호 · 저장된 작업 복원`);
     renderCombos(currentCombos, currentDetails);
     renderAnalysis(currentAnalysis);
@@ -1246,7 +1248,7 @@ function buildSmsExportRows(scope='all'){
   const analysis = normalizeText(currentAnalysis || '').trim();
   const round = currentRound || '';
   return members.map(m=>{
-    const message = buildTemplateMessage(m, round, combos, analysis);
+    const message = buildBulkSmsMessage(m, round, combos, analysis);
     return {
       name: m.name || '',
       phone: String(m.phone || '').replace(/[^0-9]/g, ''),
@@ -1258,6 +1260,26 @@ function buildSmsExportRows(scope='all'){
     };
   });
 }
+
+function getBulkSmsTemplate(){
+  const custom = normalizeText($('bulkSmsTemplate')?.value || '').trim();
+  return custom || normalizeText($('template')?.value || '').trim() || normalizeText(currentSms || '').trim();
+}
+function buildBulkSmsMessage(member, round, combos, analysis){
+  const tpl = getBulkSmsTemplate();
+  if(tpl){
+    return applyTemplate(tpl, member || {}, round || currentRound || '', combos || normalizeCombos(currentCombos), analysis || currentAnalysis || '');
+  }
+  return buildTemplateMessage(member, round, combos, analysis);
+}
+function applyBulkTemplateToPreview(){
+  const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
+  const txt = buildBulkSmsMessage(m, currentRound || '', normalizeCombos(currentCombos), currentAnalysis || '');
+  if($('smsPreview')) $('smsPreview').value = txt;
+  setText('smsExportInfo', '수정한 전체회원 문구를 미리보기에 적용했습니다. CSV 생성 시 회원별 이름/번호가 자동 치환됩니다.');
+  toast('전체회원 발송 문구를 적용했습니다.');
+}
+
 function downloadSmsCsv(scope='all'){
   if(!normalizeCombos(currentCombos).length && !confirm('추천번호 생성 결과가 없습니다. 그래도 CSV를 만들까요?')) return;
   const rows = buildSmsExportRows(scope);
@@ -1377,7 +1399,7 @@ async function addAdmin(){
   if(!body.username || body.password.length<4){ alert('관리자 아이디와 4자리 이상 비밀번호를 입력하세요.'); return; }
   await api('/api/admins',{method:'POST',body});
   ['newAdmin','newAdminName','newAdminPw','newAdminMemo'].forEach(x=>setValue(x,''));
-  setValue('newAdminRole','전체권한');
+  setValue('newAdminRole','일반관리자');
   toast('관리자를 생성했습니다.'); closeAdminCreateModal(); await loadAdmin();
 }
 window.addAdmin=safe(addAdmin);
@@ -1419,8 +1441,8 @@ function openAdminEditModal(admin){
       <input id="editUsername" value="${esc(admin.username||'')}" disabled style="width:100%;box-sizing:border-box;padding:13px;border-radius:12px;border:1px solid rgba(212,175,55,.35);background:#111;color:#aaa;">
       <label style="display:block;margin:10px 0 6px;font-weight:700;">관리자명</label>
       <input id="editName" value="${esc(admin.name||'관리자')}" style="width:100%;box-sizing:border-box;padding:13px;border-radius:12px;border:1px solid rgba(212,175,55,.5);background:#050505;color:white;">
-      <label style="display:block;margin:10px 0 6px;font-weight:700;">권한명</label>
-      <input id="editRole" value="${esc(admin.role||'전체권한')}" style="width:100%;box-sizing:border-box;padding:13px;border-radius:12px;border:1px solid rgba(212,175,55,.5);background:#050505;color:white;">
+      <label style="display:block;margin:10px 0 6px;font-weight:700;">관리자 권한</label>
+      <select id="editRole" style="width:100%;box-sizing:border-box;padding:13px;border-radius:12px;border:1px solid rgba(212,175,55,.5);background:#050505;color:white;"><option value="일반관리자">일반관리자</option><option value="대표관리자">대표관리자</option></select>
       <label style="display:block;margin:10px 0 6px;font-weight:700;">새 비밀번호</label>
       <input id="editPassword" type="password" placeholder="변경하려면 4자리 이상 입력" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:13px;border-radius:12px;border:1px solid rgba(212,175,55,.5);background:#050505;color:white;">
       <label style="display:block;margin:10px 0 6px;font-weight:700;">메모</label>
@@ -1431,6 +1453,7 @@ function openAdminEditModal(admin){
       </div>
     </div>`;
     document.body.appendChild(wrap);
+    setValue('editRole', (String(admin.role||'').includes('대표') || String(admin.role||'').toLowerCase().includes('super') || String(admin.role||'').toLowerCase().includes('owner')) ? '대표관리자' : '일반관리자');
     const close=(value)=>{ wrap.remove(); resolve(value); };
     $('cancelAdminEdit').onclick=()=>close(null);
     wrap.addEventListener('click', e=>{ if(e.target===wrap) close(null); });
@@ -1501,6 +1524,20 @@ function bind(){
   $('exportSmsCsvAll')?.addEventListener('click',()=>downloadSmsCsv('all'));
   $('exportSmsCsvSelected')?.addEventListener('click',()=>downloadSmsCsv('selected'));
   $('copySmsBulk')?.addEventListener('click',copyBulkSmsText);
+  $('applyBulkTemplate')?.addEventListener('click',applyBulkTemplateToPreview);
+  $('bulkSmsTemplate')?.addEventListener('input',()=>{ saveWorkspaceState(); setText('smsExportInfo','수정한 문구가 CSV/복사에 적용됩니다.'); });
+  if(!window.__bbSmsExportDelegatedClickBound){
+    window.__bbSmsExportDelegatedClickBound=true;
+    document.addEventListener('click', function(e){
+      const btn=e.target && e.target.closest ? e.target.closest('button') : null;
+      if(!btn) return;
+      const id=btn.id || '';
+      if(id==='exportSmsCsvAll'){ e.preventDefault(); downloadSmsCsv('all'); return; }
+      if(id==='exportSmsCsvSelected'){ e.preventDefault(); downloadSmsCsv('selected'); return; }
+      if(id==='copySmsBulk'){ e.preventDefault(); copyBulkSmsText(); return; }
+      if(id==='applyBulkTemplate'){ e.preventDefault(); applyBulkTemplateToPreview(); return; }
+    });
+  }
   $('checkWinning')?.addEventListener('click',safe(checkWinning));
   $('saveDraw')?.addEventListener('click',safe(saveDraw));
   $('addAdmin')?.addEventListener('click',safe(addAdmin));

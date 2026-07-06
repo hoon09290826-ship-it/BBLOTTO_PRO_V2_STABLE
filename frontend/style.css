@@ -205,3 +205,8 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .sms-export-panel h3{margin:0 0 6px;color:#f4d35e;font-size:15px}
 .sms-export-panel small{display:block;margin-top:8px;color:#b8aa78;line-height:1.45}
 .btnrow.wrap{flex-wrap:wrap}
+
+
+/* RC6-2 문자간다 CSV 문구 수정 영역 */
+.sms-export-panel textarea{width:100%;min-height:120px;margin:8px 0 10px;resize:vertical;background:#050505;color:#fff;border:1px solid rgba(212,175,55,.45);border-radius:12px;padding:12px;box-sizing:border-box;line-height:1.45}
+.sms-export-panel label{display:block;margin-top:10px;color:#f6d878;font-weight:800;font-size:13px}
