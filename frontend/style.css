@@ -170,3 +170,9 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .modal-card{position:relative!important;z-index:90001!important;pointer-events:auto!important;}
 .modal-card *{pointer-events:auto!important;}
 .modal-card button:not(:disabled){cursor:pointer!important;}
+
+/* RC5.4 admin modal focus/click fix */
+#adminCreateModal{display:none;pointer-events:auto!important;z-index:100000!important;}
+#adminCreateModal.is-open{display:flex!important;pointer-events:auto!important;}
+#adminCreateModal[aria-hidden="true"]{display:none!important;}
+#adminCreateModal .modal-card,#adminCreateModal button,#adminCreateModal input{pointer-events:auto!important;position:relative;z-index:100001;}

@@ -801,8 +801,29 @@ function switchAdminPanel(panel){
   document.querySelectorAll('.admin-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.adminPanel===panel));
   document.querySelectorAll('[data-admin-panel-box]').forEach(box=>box.classList.toggle('active', box.dataset.adminPanelBox===panel));
 }
-function openAdminCreateModal(){ const m=$('adminCreateModal'); if(m){ m.style.display='flex'; m.removeAttribute('aria-hidden'); } setTimeout(()=>$('newAdmin')?.focus(),30); }
-function closeAdminCreateModal(){ const m=$('adminCreateModal'); if(m){ m.style.display='none'; m.setAttribute('aria-hidden','true'); } }
+function openAdminCreateModal(){
+  const m=$('adminCreateModal');
+  if(!m) return;
+  // RC5.4 FIX: aria-hidden이 남아있는 상태에서 input에 포커스가 잡히면
+  // Chrome이 클릭/포커스 처리를 막는 경우가 있어 열린 상태에서는 완전히 제거한다.
+  m.style.display='flex';
+  m.classList.add('is-open');
+  m.removeAttribute('aria-hidden');
+  m.removeAttribute('inert');
+  m.inert=false;
+  const card=m.querySelector('.modal-card');
+  if(card){ card.removeAttribute('aria-hidden'); card.removeAttribute('inert'); card.inert=false; }
+  setTimeout(()=>{ const first=$('newAdmin'); if(first) first.focus(); },30);
+}
+function closeAdminCreateModal(){
+  const m=$('adminCreateModal');
+  if(!m) return;
+  // 닫기 전에 모달 내부 포커스를 먼저 빼야 aria-hidden 경고와 클릭 먹통을 방지한다.
+  if(m.contains(document.activeElement)) document.activeElement.blur();
+  m.classList.remove('is-open');
+  m.style.display='none';
+  m.setAttribute('aria-hidden','true');
+}
 window.openAdminCreateModal=openAdminCreateModal;
 window.closeAdminCreateModal=closeAdminCreateModal;
 
@@ -1264,35 +1285,32 @@ function bind(){
   $('adminCreateModal')?.addEventListener('click',e=>{ if(e.target && e.target.id==='adminCreateModal') closeAdminCreateModal(); });
   document.querySelectorAll('.admin-tab-btn').forEach(b=>b.addEventListener('click',()=>switchAdminPanel(b.dataset.adminPanel)));
 
-  // RC5.2 FIX: 관리자 화면은 innerHTML로 목록/탭이 다시 그려져도 버튼이 죽지 않도록
-  // 문서 전체 위임 이벤트를 사용한다. 기존 직접 바인딩이 끊겨도 생성/취소/닫기/탭 버튼이 동작한다.
+  // RC5.4 FIX: 관리자 모달 버튼은 onclick/직접 바인딩에 의존하지 않고
+  // 버블 단계 이벤트 위임으로 처리한다. pointerdown preventDefault는 제거했다.
   if(!window.__bbAdminDelegatedClickBound){
     window.__bbAdminDelegatedClickBound=true;
     document.addEventListener('click', function(e){
-      const t=e.target;
-      if(!t) return;
-      const btn=t.closest && t.closest('button');
+      const btn=e.target && e.target.closest ? e.target.closest('button') : null;
       if(!btn) return;
       const id=btn.id || '';
-      if(id==='openAdminModal'){ e.preventDefault(); openAdminCreateModal(); return; }
-      if(id==='closeAdminModal' || id==='cancelAdminModal'){ e.preventDefault(); closeAdminCreateModal(); return; }
-      if(id==='addAdmin'){ e.preventDefault(); safe(addAdmin)(); return; }
+      if(id==='openAdminModal'){
+        e.preventDefault(); openAdminCreateModal(); return;
+      }
+      if(id==='closeAdminModal' || id==='cancelAdminModal'){
+        e.preventDefault(); closeAdminCreateModal(); return;
+      }
+      if(id==='addAdmin'){
+        e.preventDefault(); window.addAdmin ? window.addAdmin() : safe(addAdmin)(); return;
+      }
       if(btn.classList && btn.classList.contains('admin-tab-btn')){
         e.preventDefault(); switchAdminPanel(btn.dataset.adminPanel || 'admins'); return;
       }
-    }, true);
-    document.addEventListener('pointerdown', function(e){
-      const el=e.target && e.target.closest ? e.target.closest('#closeAdminModal,#cancelAdminModal,#addAdmin,#openAdminModal,.admin-tab-btn') : null;
-      if(!el) return;
-      const id=el.id||'';
-      if(id==='openAdminModal'){ e.preventDefault(); openAdminCreateModal(); return; }
-      if(id==='closeAdminModal' || id==='cancelAdminModal'){ e.preventDefault(); closeAdminCreateModal(); return; }
-      if(id==='addAdmin'){ e.preventDefault(); safe(addAdmin)(); return; }
-      if(el.classList && el.classList.contains('admin-tab-btn')){ e.preventDefault(); switchAdminPanel(el.dataset.adminPanel || 'admins'); return; }
-    }, true);
-    document.addEventListener('keydown', function(e){
-      if(e.key==='Escape') closeAdminCreateModal();
     });
+    document.addEventListener('click', function(e){
+      const modal=$('adminCreateModal');
+      if(modal && modal.style.display!=='none' && e.target===modal) closeAdminCreateModal();
+    });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeAdminCreateModal(); });
   }
   $('saveSessionTimeout')?.addEventListener('click',safe(saveSessionTimeout));
   $('createBackup')?.addEventListener('click',safe(createBackup));
