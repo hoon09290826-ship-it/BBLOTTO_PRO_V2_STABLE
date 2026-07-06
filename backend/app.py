@@ -26,7 +26,9 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC5-9')
+RC_VERSION = 'RC5-12_DEPLOY_STABILITY'
+APP_VERSION = 'BBLOTTO PRO V2 STABLE'
+app = FastAPI(title=f'{APP_VERSION} {RC_VERSION}')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
 RC3_9_VERSION = 'V2_STABLE_RC3_15'
 RC3_10_VERSION = 'V2_STABLE_RC3_15'
@@ -1319,7 +1321,40 @@ class SettingReq(BaseModel): key:str; value:str
 
 @app.get('/api/health')
 def health():
-    return {'ok': True, 'app': 'BBLOTTO PRO V2 STABLE', 'phase': 'RC5_9_GITHUB_DEPLOY_READY', 'time': now(), 'db_engine': DB_ENGINE, 'database_url_set': bool(DATABASE_URL), 'db_path': str(DB), 'persistent_dir': str(DB_DIR)}
+    return {'ok': True, 'app': APP_VERSION, 'phase': RC_VERSION, 'rc_version': RC_VERSION, 'time': now(), 'db_engine': DB_ENGINE, 'database_url_set': bool(DATABASE_URL), 'db_path': str(DB), 'persistent_dir': str(DB_DIR)}
+
+
+
+@app.get('/api/rc5-12/status')
+def rc5_12_status():
+    """RC5-12: GitHub/Railway 배포 안정성 및 회원검색 상태 진단."""
+    checks = []
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
+    add('frontend_exists', FRONT.exists(), str(FRONT))
+    add('database_dir_writable', os.access(str(DB_DIR), os.W_OK), str(DB_DIR))
+    add('export_dir_writable', os.access(str(EXPORT_DIR), os.W_OK), str(EXPORT_DIR))
+    add('db_file_ready', DB.exists(), str(DB))
+    try:
+        with con() as c:
+            tables = {r['name'] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            add('members_table', 'members' in tables, '회원관리 테이블')
+            add('admins_table', 'admins' in tables, '관리자 테이블')
+            member_count = c.execute('SELECT COUNT(*) c FROM members').fetchone()['c'] if 'members' in tables else 0
+            admin_count = c.execute('SELECT COUNT(*) c FROM admins').fetchone()['c'] if 'admins' in tables else 0
+    except Exception as e:
+        add('database_open', False, str(e))
+        member_count = 0
+        admin_count = 0
+    return {
+        'ok': all(x['ok'] for x in checks),
+        'app': APP_VERSION,
+        'rc_version': RC_VERSION,
+        'time': now(),
+        'counts': {'members': member_count, 'admins': admin_count},
+        'checks': checks,
+        'next': '회원검색은 /api/members?q=검색어 로 진단할 수 있습니다.'
+    }
 
 @app.get('/api/persistence_status')
 def persistence_status(authorization: str|None = Header(default=None)):
@@ -1523,7 +1558,7 @@ def rc3_member_db_login_logs(limit:int=100, authorization: str|None = Header(def
 
 @app.get('/api/version')
 def version():
-    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': 'RC4-3_MEMBER_DETAIL_PLUS', 'rc_version': 'RC4-3', 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair','member_detail_message_history','member_detail_winning_history','member_detail_recommendation_hidden'], 'time': now()}
+    return {'app': 'BBLOTTO PRO', 'version': 'V2 STABLE', 'phase': RC_VERSION, 'rc_version': RC_VERSION, 'features': ['server_foundation','members','recommendations','stats100','top3','score_grade','recommendation_history','admin_logs','db_health','cloud_deploy','backup_restore_guard','admin_audit','db_standardization','draw_auto_fetch_fallback','official_cache','ai_engine_v1_0','pair_triple_analysis','reason_based_scoring','member_linked_recommendations','member_linked_win_check','orphan_recommendation_repair','member_detail_message_history','member_detail_winning_history','member_detail_recommendation_hidden'], 'time': now()}
 
 @app.get('/api/rc3-8/health')
 def rc38_health(authorization: str|None = Header(default=None)):
