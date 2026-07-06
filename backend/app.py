@@ -1974,9 +1974,10 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
     if scope_sql:
         wh.append(scope_sql); args += scope_args
     if q:
-        wh.append('(m.name LIKE ? OR m.phone LIKE ? OR m.grade LIKE ? OR m.memo LIKE ? OR COALESCE(m.source,"") LIKE ? OR COALESCE(m.priority,"") LIKE ? OR COALESCE(a.name,"") LIKE ? OR COALESCE(a.username,"") LIKE ?)')
+        wh.append('(m.name LIKE ? OR REPLACE(REPLACE(REPLACE(m.phone,"-","")," ",""),".","") LIKE ? OR m.phone LIKE ? OR m.grade LIKE ? OR m.memo LIKE ? OR COALESCE(m.source,"") LIKE ? OR COALESCE(m.priority,"") LIKE ? OR COALESCE(a.name,"") LIKE ? OR COALESCE(a.username,"") LIKE ?)')
         like=f'%{q}%'
-        args += [like, like, like, like, like, like, like, like]
+        digits='%' + ''.join(ch for ch in q if ch.isdigit()) + '%'
+        args += [like, digits, like, like, like, like, like, like, like]
     if status:
         wh.append('COALESCE(m.status, "활성")=?')
         args.append(status)

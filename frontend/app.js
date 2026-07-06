@@ -390,12 +390,19 @@ function renderEngine(engine, details=[]){
   </div>`;
 }
 
-function normalizeSearchText(v){ return String(v||'').toLowerCase().replace(/\s+/g,'').trim(); }
+function normalizeSearchText(v){ return String(v||'').toLowerCase().replace(/[\s\-_.()]/g,'').trim(); }
+function normalizePhoneText(v){ return String(v||'').replace(/\D/g,''); }
 function getMemberSearchText(m){
   return normalizeSearchText([
-    m.name, m.phone, m.grade, memberGradeLabel(m.grade), m.status, m.priority, m.source, m.memo,
+    m.name, m.phone, normalizePhoneText(m.phone), m.grade, memberGradeLabel(m.grade), m.status, m.priority, m.source, m.memo,
     m.registered_by_name, m.created_by_name, m.registered_by_username, m.created_by, m.admin_name
   ].join(' '));
+}
+function memberMatchesSearch(m, q){
+  if(!q) return true;
+  const haystack = getMemberSearchText(m);
+  const qDigits = normalizePhoneText(q);
+  return haystack.includes(q) || (!!qDigits && normalizePhoneText(m.phone).includes(qDigits));
 }
 function applyMemberFilters(){
   const q = normalizeSearchText($('memberSearch')?.value || '');
@@ -404,7 +411,7 @@ function applyMemberFilters(){
   const priority=$('memberPriorityFilter')?.value||'';
   const sort=$('memberSort')?.value||'priority';
   let list = Array.isArray(membersCache) ? [...membersCache] : [];
-  if(q) list = list.filter(m => getMemberSearchText(m).includes(q));
+  if(q) list = list.filter(m => memberMatchesSearch(m, q));
   if(status) list = list.filter(m => String(m.status||'활성') === status);
   if(grade) list = list.filter(m => memberGradeLabel(m.grade) === grade || String(m.grade||'') === grade);
   if(priority) list = list.filter(m => String(m.priority||'보통') === priority);
@@ -477,6 +484,7 @@ function fillMemberSelect(list){
 
 async function loadMembers(){
   const params = new URLSearchParams();
+  params.set('limit', '1000');
   const sort=$('memberSort')?.value||'priority';
   if(sort) params.set('sort', sort);
   // 서버에는 권한 범위만 맡기고, 검색/필터/페이지는 전체 목록 기준으로 프론트에서 처리합니다.
