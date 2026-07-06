@@ -1295,10 +1295,21 @@ function copyBulkSmsText(){
   const rows = buildSmsExportRows('all');
   if(!rows.length){ alert('복사할 회원 연락처가 없습니다.'); return; }
   const text = rows.map(r=>`${r.phone}\t${r.message}`).join('\n\n');
-  navigator.clipboard?.writeText(text);
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); } else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   setText('smsExportInfo', `${rows.length}명 문자내용을 클립보드에 복사했습니다.`);
   toast('전체 회원 문자 내용을 복사했습니다.');
 }
+
+
+// RC6-3: 문자간다 CSV 버튼 강제 전역 핸들러
+function bbDownloadSmsCsvAll(){ try{ downloadSmsCsv('all'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
+function bbDownloadSmsCsvSelected(){ try{ downloadSmsCsv('selected'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
+function bbCopySmsBulk(){ try{ copyBulkSmsText(); }catch(e){ console.error(e); alert('문자 복사 중 오류: '+(e.message||e)); } }
+function bbApplyBulkTemplate(){ try{ applyBulkTemplateToPreview(); }catch(e){ console.error(e); alert('문구 적용 중 오류: '+(e.message||e)); } }
+window.bbDownloadSmsCsvAll = bbDownloadSmsCsvAll;
+window.bbDownloadSmsCsvSelected = bbDownloadSmsCsvSelected;
+window.bbCopySmsBulk = bbCopySmsBulk;
+window.bbApplyBulkTemplate = bbApplyBulkTemplate;
 
 async function checkWinning(){
   // PHASE20: 회차/당첨번호 확인을 백엔드 자동화에 맡깁니다.
