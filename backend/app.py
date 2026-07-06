@@ -2261,7 +2261,7 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
     engine['grade_strength']=rc45_grade_strength_text(member_grade)
     engine['rc38_report']=rc38_generation_report(combos, details, safe_round, safe_mode)
     engine['top3']=rc37_top3(combos, details)
-    engine['quality_guide']=f'{member_grade} 추천 강도 · {rc45_grade_strength_text(member_grade)} · RC4-5 심층분석 엔진 적용'
+    engine['quality_guide']=f'{member_grade} 관리 기준 · 최근 흐름과 누적 통계를 반영한 맞춤 추천'
     with con() as c:
         # Render에 남아 있는 오래된 DB도 요청 시점에 한 번 더 보정합니다.
         rec_cols=table_cols(c, 'recommendations')
@@ -5711,7 +5711,7 @@ def _engine_summary(details, st):
             'grade_policy': '회원 등급은 1등/2등/일반으로 운영하며 등급별 후보 수, 중복 제한, 조합 선별 강도를 다르게 적용합니다.',
             'filters': '홀짝·합계·저중고 구간·AC값·끝수·간격·연속수·과거 동일 조합·페어 반복 제한',
             'portfolio': st.get('rc42_portfolio') or {},
-            'summary': 'RC4-5 심층분석 추천엔진 적용 완료'
+            'summary': '최근 흐름과 누적 통계를 함께 반영한 심층 추천 결과입니다.'
         }
     }
 
@@ -5725,17 +5725,18 @@ def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
         for n in d.get('numbers', []):
             if n not in top_nums:
                 top_nums.append(n)
-    avg = engine.get('avg_score', 0)
     hot = (st.get('hot300') or st.get('hot') or [])[:6]
     overdue = (st.get('overdue300') or st.get('overdue') or [])[:6]
-    mode_name = {'balanced': '균형형', 'aggressive': '공격형', 'conservative': '보수형'}.get(mode, mode or '균형형')
-    grade_phrase = {'1등':'상위 집중 관리 기준', '2등':'중상위 집중 관리 기준', '일반':'표준 관리 기준'}.get(grade, '표준 관리 기준')
+    mode_name = {'balanced': '균형형', 'aggressive': '공격형', 'conservative': '안정형'}.get(mode, mode or '균형형')
+    grade_phrase = {'1등':'상위 관리', '2등':'집중 관리', '일반':'기본 관리'}.get(grade, '기본 관리')
+    core_text = ', '.join(map(str, top_nums[:6])) if top_nums else '분산 후보군'
+    hot_text = ', '.join(map(str, hot[:4])) if hot else '최근 흐름 번호'
+    sub_text = ', '.join(map(str, overdue[:4])) if overdue else '보강 후보 번호'
     lines = [
-        f'{round_no}회차 추천은 RC4-5 심층분석 엔진으로 {grade_phrase}에 맞춰 선별했습니다.',
-        f'최근 10/30/50/100/300회 흐름을 교차 반영하고, HOT 흐름({", ".join(map(str, hot)) if hot else "자동 분석"})과 보강 흐름({", ".join(map(str, overdue)) if overdue else "자동 보강"})을 함께 검토했습니다.',
-        f'우선 후보 번호는 {", ".join(map(str, top_nums[:8])) if top_nums else "생성 결과 기준 자동 산출"}이며, 최종 조합 평균 AI 점수는 {avg}점입니다.',
-        f'{mode_name} 운영 기준으로 끝수 분산, 저/중/고 구간, 홀짝 균형, AC값, 연속수, 조합 간 중복률을 종합 제한했습니다.',
-        '본 자료는 누적 통계와 패턴 분석을 기반으로 한 참고용 추천이며 당첨을 보장하지 않습니다.'
+        f'{round_no}회차는 최근 당첨 흐름과 누적 통계를 함께 비교해 {grade_phrase} 기준에 맞는 조합으로 선별했습니다.',
+        f'주요 후보는 {core_text}이며, 최근 흐름 번호({hot_text})와 보강 후보({sub_text})를 균형 있게 반영했습니다.',
+        f'{mode_name} 조합 기준으로 홀짝, 번호 구간, 끝수 분포와 반복 패턴을 조정해 한쪽으로 치우치지 않게 구성했습니다.',
+        '이전 회차와 유사한 조합은 줄이고, 전체 조합 간 중복률을 낮춰 안정성과 다양성을 함께 높였습니다.'
     ]
-    return '\n'.join(lines)
+    return '\n'.join(lines[:4])
 # ===================== /RC4-5 DEEP RECOMMEND ENGINE =====================

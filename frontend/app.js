@@ -294,16 +294,14 @@ function buildFallbackAnalysis(combos, stats, mode){
   const avgSum = Math.round(sums.reduce((a,b)=>a+b,0)/sums.length);
   const odds = combos.map(c=>c.filter(n=>Number(n)%2).length);
   const avgOdd = (odds.reduce((a,b)=>a+b,0)/odds.length).toFixed(1);
-  const hot = stats?.hot?.slice?.(0,6) || [];
-  const cold = stats?.cold?.slice?.(0,6) || [];
-  const pair = stats?.top_pairs?.[0]?.pair?.join('-') || '';
-  const modeText = {balanced:'균형형',conservative:'보수형',aggressive:'공격형'}[mode] || mode || '균형형';
+  const hot = stats?.hot?.slice?.(0,4) || [];
+  const cold = stats?.cold?.slice?.(0,4) || [];
+  const modeText = {balanced:'균형형',conservative:'안정형',aggressive:'공격형'}[mode] || mode || '균형형';
   return [
-    `이번 회차는 ${modeText} 기준으로 최근 통계와 생성 조합의 분산을 함께 반영했습니다.`,
-    `생성 조합 내 핵심 흐름은 ${core.join(', ')}이며 평균 합계는 ${avgSum}, 평균 홀수 비중은 ${avgOdd}개입니다.`,
-    hot.length ? `최근 데이터 HOT 번호 ${hot.join(', ')}와 저출현 보강 번호 ${cold.join(', ')}를 혼합했습니다.` : `저장된 당첨번호가 부족해 기본 분산 규칙을 우선 적용했습니다.`,
-    pair ? `동반출현 흐름은 ${pair} 조합을 참고했고, 과도한 연속수와 한 구간 쏠림은 제한했습니다.` : `동반출현 데이터가 부족해 홀짝·구간·끝수 균형을 우선 적용했습니다.`,
-    `최종 조합은 단순 랜덤이 아니라 후보 조합을 점수화한 뒤 중복과 편향을 줄인 결과입니다.`
+    `이번 회차는 최근 당첨 흐름과 누적 통계를 함께 비교해 ${modeText} 조합으로 선별했습니다.`,
+    `주요 후보는 ${core.join(', ')}이며, 평균 합계 ${avgSum}와 홀짝 흐름 ${avgOdd}: ${Math.max(0, (6-Number(avgOdd))).toFixed(1)} 기준을 함께 반영했습니다.`,
+    hot.length ? `최근 흐름 번호(${hot.join(', ')})와 보강 후보(${cold.join(', ')})를 균형 있게 섞어 편중을 줄였습니다.` : `번호 구간, 끝수 분포와 반복 패턴을 조정해 한쪽으로 치우치지 않게 구성했습니다.`,
+    `이전 회차와 유사한 조합은 줄이고, 조합 간 중복률을 낮춰 안정성과 다양성을 함께 높였습니다.`
   ].join('\n');
 }
 
@@ -931,7 +929,7 @@ async function generate(){
     exclude:$('exclude')?.value||''
   };
   if(!selectedMemberId){ alert('회원별 당첨확인을 위해 먼저 회원을 선택한 뒤 추천번호를 생성하세요.'); return; }
-  setBusy('generate',true,'RC3-14 회원 연동 AI 엔진 분석 중...');
+  setBusy('generate',true,'회원 맞춤 추천번호 분석 중...');
   try{
     const d=await api('/api/generate',{method:'POST',body});
     currentRecId=d.id||null;
@@ -941,7 +939,7 @@ async function generate(){
     const fallback = buildFallbackAnalysis(currentCombos, latestStatsCache, body.mode);
     currentAnalysis=normalizeText(d.analysis||d.ai_analysis||d.engine?.summary||fallback);
     currentSms=normalizeText(d.sms||'') || buildTemplateMessage(getSelectedMember(), currentRound, currentCombos, currentAnalysis);
-    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · RC4-5 심층분석 엔진` : '생성 완료');
+    setText('roundLabel', currentRound ? `${currentRound}회차 추천번호 · 심층분석 완료` : '생성 완료');
     renderCombos(currentCombos,currentDetails);
     renderAnalysis(currentAnalysis);
     renderEngine(d.engine,currentDetails);
