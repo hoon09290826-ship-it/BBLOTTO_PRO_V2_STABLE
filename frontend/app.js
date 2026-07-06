@@ -136,7 +136,7 @@ async function api(path, opts={}){
   if(!r.ok){
     const err = data.error || data.detail || data.message || text || '요청 실패';
     const msg = (err && typeof err === 'object') ? (err.message || err.detail || JSON.stringify(err)) : String(err);
-    throw new Error(msg);
+    throw new Error((path || 'API') + ' : ' + msg);
   }
   return data;
 }
@@ -580,13 +580,25 @@ async function loadRc44AiStatus(){
   box.innerHTML=`<h4>모드별 추천</h4>${rc44Rows(modeRows,'모드별 데이터 없음')}<h4>오늘 생성 로그</h4>${rc44Rows(todayRows,'오늘 생성 이력 없음')}`;
 }
 async function loadDashboard(){
-  try{ await loadRc44Dashboard(); }
-  catch(e){
+  try{
+    await loadRc44Dashboard();
+    return true;
+  }catch(e){
     console.warn('RC4-4 대시보드 실패, 기본 대시보드 사용', e);
-    let d; try{ d=await api('/api/dashboard_v2'); }catch(_){ d=await api('/api/dashboard_summary'); }
+  }
+  try{
+    let d;
+    try{ d=await api('/api/dashboard_v2'); }
+    catch(_){ d=await api('/api/dashboard_summary'); }
     setText('memberCount', d.members ?? 0); setText('latestRound', d.latest_round ?? '-'); setText('recCount', d.recommendations ?? 0); setText('smsCount', d.sms ?? 0);
     const engineMini=$('engineMini'); if(engineMini) engineMini.textContent=`${d.engine_version||'AI'} · 평균 ${d.avg_ai_score||0}점 · 오늘 ${d.today_recommendations||0}건`;
     const recent=$('recentRecs'); if(recent) recent.innerHTML=(d.recent_recommendations||[]).map(r=>`<p>${r.round_no}회 · ${esc(r.member_name||'회원')} · ${esc(r.created_at||'')}</p>`).join('') || '최근 생성 이력이 없습니다.';
+    return true;
+  }catch(e){
+    console.error('대시보드 로딩 실패', e);
+    setText('memberCount', '0'); setText('latestRound', '-'); setText('recCount', '0'); setText('smsCount', '0');
+    const sub=$('rc44AdminSub'); if(sub) sub.textContent='대시보드 일부 데이터를 불러오지 못했습니다. 회원관리/추천번호 기능은 계속 사용할 수 있습니다.';
+    return false;
   }
 }
 async function rc44RunAutoUpdate(){
@@ -1660,10 +1672,23 @@ async function init(){
     setText('who','관리자');
   }
   try{
-    await Promise.all([loadDashboard(), loadMembers(), loadTemplate(), loadStats(100), loadDraws(), setNextDrawRound()]);
+    const tasks = [
+      ['dashboard', loadDashboard()],
+      ['members', loadMembers()],
+      ['template', loadTemplate()],
+      ['stats', loadStats(100)],
+      ['draws', loadDraws()],
+      ['nextRound', setNextDrawRound()]
+    ];
+    const results = await Promise.allSettled(tasks.map(x=>x[1]));
+    const failed = results.map((r,i)=>({r,name:tasks[i][0]})).filter(x=>x.r.status==='rejected');
+    if(failed.length){
+      console.warn('초기 로딩 일부 실패', failed.map(x=>x.name), failed);
+      toast('일부 현황 데이터 로딩 실패 · 기능은 계속 사용 가능합니다.');
+    }
     const restored = restoreWorkspaceState() || await restoreLatestRecommendationFromServer();
     if(!restored){ renderCombos([]); refreshSmsPreview(); }
-  }catch(e){ console.error(e); alert(e.message || e); }
+  }catch(e){ console.error(e); toast(e.message || e); }
 }
 init();
 

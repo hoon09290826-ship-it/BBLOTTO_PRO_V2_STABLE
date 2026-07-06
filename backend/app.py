@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-RC_VERSION = 'RC5-16_SECURITY_CLEANUP'
+RC_VERSION = 'RC6-7_DASHBOARD_SERVER_GUARD'
 APP_VERSION = 'BBLOTTO PRO V2 STABLE'
 app = FastAPI(title=f'{APP_VERSION} {RC_VERSION}')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
@@ -1892,6 +1892,22 @@ def rc38_recommendation_summary(limit:int=20, authorization: str|None = Header(d
         by_round=c.execute('SELECT round_no, COUNT(*) c, AVG(avg_score) avg_score FROM recommendations GROUP BY round_no ORDER BY round_no DESC LIMIT 20').fetchall()
         by_member=c.execute('SELECT COALESCE(member_name,"미지정") member_name, COUNT(*) c, MAX(created_at) latest FROM recommendations GROUP BY COALESCE(member_name,"미지정") ORDER BY c DESC, latest DESC LIMIT 20').fetchall()
     return {'ok': True, 'version': RC3_8_VERSION, 'recent':[dict(r) for r in recent], 'by_round':[dict(r) for r in by_round], 'by_member':[dict(r) for r in by_member]}
+
+
+
+@app.get('/api/rc6-7/status')
+def rc67_status(authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    checks=[]
+    with con() as c:
+        for table in ['admins','members','recommendations','sms_logs','draws','settings']:
+            try:
+                cnt=c.execute(f'SELECT COUNT(*) c FROM {table}').fetchone()['c']
+                checks.append({'table':table,'ok':True,'count':cnt})
+            except Exception as e:
+                checks.append({'table':table,'ok':False,'error':str(e)[:200]})
+    return {'ok': all(x.get('ok') for x in checks), 'version':'RC6-7_DASHBOARD_SERVER_GUARD', 'db_engine':DB_ENGINE, 'checks':checks, 'time':now()}
+
 
 @app.get('/')
 def login_page(): return FileResponse(FRONT/'login.html')
