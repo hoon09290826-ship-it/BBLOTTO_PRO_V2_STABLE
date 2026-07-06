@@ -414,7 +414,37 @@ function memberMatchesSearch(m, q){
   if(!q) return true;
   const haystack = getMemberSearchText(m);
   const qDigits = normalizePhoneText(q);
-  return haystack.includes(q) || (!!qDigits && normalizePhoneText(m.phone).includes(qDigits));
+  const tokens = String(q||'').split(/\s+/).map(normalizeSearchText).filter(Boolean);
+  const tokenOk = tokens.length ? tokens.every(t => haystack.includes(t)) : false;
+  return haystack.includes(q) || tokenOk || (!!qDigits && normalizePhoneText(m.phone).includes(qDigits));
+}
+function saveMemberFilterState(){
+  try{
+    localStorage.setItem('bblotto_member_filters', JSON.stringify({
+      q: $('memberSearch')?.value || '',
+      status: $('memberStatusFilter')?.value || '',
+      grade: $('memberGradeFilter')?.value || '',
+      priority: $('memberPriorityFilter')?.value || '',
+      sort: $('memberSort')?.value || 'priority',
+      pageSize: memberPageSize
+    }));
+  }catch(e){}
+}
+function restoreMemberFilterState(){
+  try{
+    const st = JSON.parse(localStorage.getItem('bblotto_member_filters') || '{}');
+    if($('memberSearch')) $('memberSearch').value = st.q || '';
+    if($('memberStatusFilter')) $('memberStatusFilter').value = st.status || '';
+    if($('memberGradeFilter')) $('memberGradeFilter').value = st.grade || '';
+    if($('memberPriorityFilter')) $('memberPriorityFilter').value = st.priority || '';
+    if($('memberSort')) $('memberSort').value = st.sort || 'priority';
+    if(st.pageSize) memberPageSize = Number(st.pageSize) || 10;
+  }catch(e){}
+}
+let memberSearchTimer = null;
+function scheduleMemberRefresh(){
+  clearTimeout(memberSearchTimer);
+  memberSearchTimer = setTimeout(()=>{ saveMemberFilterState(); refreshMemberView(); }, 120);
 }
 function applyMemberFilters(){
   const q = normalizeSearchText($('memberSearch')?.value || '');
@@ -440,7 +470,8 @@ function applyMemberFilters(){
   if(st){
     const rawQ = $('memberSearch')?.value || '';
     const activeFilters = [rawQ && `검색어 "${rawQ}"`, status && `상태 ${status}`, grade && `등급 ${grade}`, priority && `우선순위 ${priority}`].filter(Boolean);
-    st.textContent = activeFilters.length ? `검색 결과 ${list.length.toLocaleString()}명 · ${activeFilters.join(' · ')}` : `전체 회원 ${list.length.toLocaleString()}명`;
+    const maxPageText = Math.max(1, Math.ceil(list.length / memberPageSize));
+    st.textContent = activeFilters.length ? `검색 결과 ${list.length.toLocaleString()}명 · ${activeFilters.join(' · ')} · ${memberPage}/${maxPageText}페이지` : `전체 회원 ${list.length.toLocaleString()}명 · ${memberPage}/${maxPageText}페이지`;
   }
   const maxPage = Math.max(1, Math.ceil(list.length / memberPageSize));
   if(memberPage > maxPage) memberPage = maxPage;
@@ -465,8 +496,8 @@ function renderPagination(containerId, total, page, pageSize, onPageFn, onSizeFn
       <button type="button" onclick="${onPageFn}(${maxPage})" ${page>=maxPage?'disabled':''}>마지막</button>
     </div>`;
 }
-window.setMemberPage=function(p){ memberPage=Number(p)||1; renderMembers(); };
-window.setMemberPageSize=function(v){ memberPageSize=Number(v)||10; memberPage=1; renderMembers(); };
+window.setMemberPage=function(p){ memberPage=Number(p)||1; saveMemberFilterState(); renderMembers(); };
+window.setMemberPageSize=function(v){ memberPageSize=Number(v)||10; memberPage=1; saveMemberFilterState(); renderMembers(); };
 function renderMembers(list){
   const box=$('memberList'); if(!box) return;
   const source = Array.isArray(list) ? list : applyMemberFilters();
@@ -501,6 +532,7 @@ function fillMemberSelect(list){
 }
 
 async function loadMembers(){
+  restoreMemberFilterState();
   const params = new URLSearchParams();
   params.set('limit', '5000');
   const sort=$('memberSort')?.value||'priority';
@@ -1384,12 +1416,12 @@ function bind(){
   $('saveMemberBtn')?.addEventListener('click',safe(saveMember));
   $('clearMember')?.addEventListener('click',()=>['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,'')));
   $('memberDetailBack')?.addEventListener('click',()=>openPanel('members','회원 관리'));
-  $('memberSearch')?.addEventListener('input',()=>refreshMemberView());
-  $('memberSearch')?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); refreshMemberView(); } });
-  $('memberStatusFilter')?.addEventListener('change',()=>refreshMemberView());
-  $('memberGradeFilter')?.addEventListener('change',()=>refreshMemberView());
-  $('memberPriorityFilter')?.addEventListener('change',()=>refreshMemberView());
-  $('memberSort')?.addEventListener('change',()=>{ memberPage=1; applyMemberFilters(); renderMembers(memberFilteredCache); });
+  $('memberSearch')?.addEventListener('input',()=>scheduleMemberRefresh());
+  $('memberSearch')?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(memberSearchTimer); saveMemberFilterState(); refreshMemberView(); } });
+  $('memberStatusFilter')?.addEventListener('change',()=>{ saveMemberFilterState(); refreshMemberView(); });
+  $('memberGradeFilter')?.addEventListener('change',()=>{ saveMemberFilterState(); refreshMemberView(); });
+  $('memberPriorityFilter')?.addEventListener('change',()=>{ saveMemberFilterState(); refreshMemberView(); });
+  $('memberSort')?.addEventListener('change',()=>{ memberPage=1; saveMemberFilterState(); applyMemberFilters(); renderMembers(memberFilteredCache); });
   $('genMember')?.addEventListener('change',refreshSmsPreview);
   $('saveTemplate')?.addEventListener('click',safe(saveTemplate));
   $('autoTemplate')?.addEventListener('click',autoTemplate);
