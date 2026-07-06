@@ -70,7 +70,7 @@
       <h2>관리자</h2>
       <p>관리자, 활동로그, 백업만 간단하게 관리합니다.</p>
     </div>
-    <button id="openAdminModal" type="button" class="primary">+ 관리자 추가</button>
+    <button id="openAdminModal" onclick="openAdminCreateModal()" type="button" class="primary">+ 관리자 추가</button>
   </div>
 
   <div class="admin-final-tabs" role="tablist">
@@ -107,13 +107,13 @@
 
   <div id="adminCreateModal" class="modal-backdrop" style="display:none">
     <div class="modal-card">
-      <div class="modal-head"><h3>관리자 추가</h3><button type="button" id="closeAdminModal">×</button></div>
+      <div class="modal-head"><h3>관리자 추가</h3><button type="button" id="closeAdminModal" onclick="closeAdminCreateModal()">×</button></div>
       <label>아이디</label><input id="newAdmin" autocomplete="username">
       <label>관리자명</label><input id="newAdminName" placeholder="예: 강훈">
       <label>권한명</label><input id="newAdminRole" value="전체권한" placeholder="예: 전체권한">
       <label>비밀번호</label><input id="newAdminPw" type="password" autocomplete="new-password">
       <label>메모</label><input id="newAdminMemo" placeholder="예: 야간 담당">
-      <div class="btnrow"><button id="addAdmin" type="button" class="primary">생성</button><button id="cancelAdminModal" type="button">취소</button></div>
+      <div class="btnrow"><button id="addAdmin" type="button" class="primary" onclick="addAdmin()">생성</button><button id="cancelAdminModal" type="button" onclick="closeAdminCreateModal()">취소</button></div>
     </div>
   </div>
 </section>

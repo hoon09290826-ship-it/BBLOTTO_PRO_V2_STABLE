@@ -803,6 +803,8 @@ function switchAdminPanel(panel){
 }
 function openAdminCreateModal(){ const m=$('adminCreateModal'); if(m) m.style.display='flex'; setTimeout(()=>$('newAdmin')?.focus(),30); }
 function closeAdminCreateModal(){ const m=$('adminCreateModal'); if(m) m.style.display='none'; }
+window.openAdminCreateModal=openAdminCreateModal;
+window.closeAdminCreateModal=closeAdminCreateModal;
 
 async function loadAdmin(){
   try{ currentAdmin = await api('/api/me'); setText('who', currentAdmin.name || currentAdmin.username || '관리자'); startSessionWatcher(currentAdmin); renderMyAccount(); }catch(e){ currentAdmin=null; }
@@ -1136,6 +1138,7 @@ async function addAdmin(){
   setValue('newAdminRole','전체권한');
   toast('관리자를 생성했습니다.'); closeAdminCreateModal(); await loadAdmin();
 }
+window.addAdmin=safe(addAdmin);
 window.deleteAdmin=safe(async function(id, username){
   if(!confirm(`관리자 ${username || id} 계정을 완전히 삭제할까요?\n삭제하면 해당 관리자는 로그인할 수 없습니다.`)) return;
   await api('/api/admins/'+id,{method:'DELETE'});
@@ -1260,6 +1263,28 @@ function bind(){
   $('cancelAdminModal')?.addEventListener('click',closeAdminCreateModal);
   $('adminCreateModal')?.addEventListener('click',e=>{ if(e.target && e.target.id==='adminCreateModal') closeAdminCreateModal(); });
   document.querySelectorAll('.admin-tab-btn').forEach(b=>b.addEventListener('click',()=>switchAdminPanel(b.dataset.adminPanel)));
+
+  // RC5.2 FIX: 관리자 화면은 innerHTML로 목록/탭이 다시 그려져도 버튼이 죽지 않도록
+  // 문서 전체 위임 이벤트를 사용한다. 기존 직접 바인딩이 끊겨도 생성/취소/닫기/탭 버튼이 동작한다.
+  if(!window.__bbAdminDelegatedClickBound){
+    window.__bbAdminDelegatedClickBound=true;
+    document.addEventListener('click', function(e){
+      const t=e.target;
+      if(!t) return;
+      const btn=t.closest && t.closest('button');
+      if(!btn) return;
+      const id=btn.id || '';
+      if(id==='openAdminModal'){ e.preventDefault(); openAdminCreateModal(); return; }
+      if(id==='closeAdminModal' || id==='cancelAdminModal'){ e.preventDefault(); closeAdminCreateModal(); return; }
+      if(id==='addAdmin'){ e.preventDefault(); safe(addAdmin)(); return; }
+      if(btn.classList && btn.classList.contains('admin-tab-btn')){
+        e.preventDefault(); switchAdminPanel(btn.dataset.adminPanel || 'admins'); return;
+      }
+    }, true);
+    document.addEventListener('keydown', function(e){
+      if(e.key==='Escape') closeAdminCreateModal();
+    });
+  }
   $('saveSessionTimeout')?.addEventListener('click',safe(saveSessionTimeout));
   $('createBackup')?.addEventListener('click',safe(createBackup));
   $('rc44AutoUpdate')?.addEventListener('click',safe(rc44RunAutoUpdate));
