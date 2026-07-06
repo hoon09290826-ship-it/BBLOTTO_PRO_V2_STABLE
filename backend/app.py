@@ -2361,7 +2361,17 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
     sql="""
         SELECT m.*,
                COALESCE(a.name, a.username, '미지정') AS registered_by_name,
-               COALESCE(a.username, '') AS registered_by_username
+               COALESCE(a.username, '') AS registered_by_username,
+               COALESCE(a.role, '') AS registered_by_role,
+               CASE
+                   WHEN LOWER(COALESCE(a.username,''))='admin'
+                     OR REPLACE(LOWER(COALESCE(a.role,'')), ' ', '') LIKE '%대표관리자%'
+                     OR REPLACE(LOWER(COALESCE(a.role,'')), ' ', '') LIKE '%최고관리자%'
+                     OR LOWER(COALESCE(a.role,'')) LIKE '%super%'
+                     OR LOWER(COALESCE(a.role,'')) LIKE '%owner%'
+                     OR REPLACE(LOWER(COALESCE(a.name,'')), ' ', '') LIKE '%대표관리자%'
+                     OR REPLACE(LOWER(COALESCE(a.name,'')), ' ', '') LIKE '%최고관리자%'
+                   THEN 1 ELSE 0 END AS registered_by_super_admin
         FROM members m
         LEFT JOIN admins a ON a.id = COALESCE(m.created_by,0)
     """ + (' WHERE ' + ' AND '.join(wh) if wh else '') + f' ORDER BY {order} LIMIT ?'

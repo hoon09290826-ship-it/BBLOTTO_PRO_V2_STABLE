@@ -543,7 +543,7 @@ async function loadMembers(){
   // 서버에는 권한 범위만 맡기고, 검색/필터/페이지는 전체 목록 기준으로 프론트에서 처리합니다.
   membersCache = await api('/api/members' + (params.toString() ? '?'+params.toString() : ''));
   applyMemberFilters();
-  renderMembers(memberFilteredCache); fillMemberSelect(membersCache);
+  renderMembers(memberFilteredCache); fillMemberSelect(membersCache); refreshSmsScopeInfo();
   setText('memberActive', membersCache.filter(m=>(m.status||'활성')==='활성').length);
   setText('memberVip', membersCache.filter(m=>['1등','2등','VIP','다이아','프리미엄'].includes(String(m.grade||''))).length);
   setText('memberPriority', membersCache.filter(m=>(m.priority||'').includes('높') || (m.priority||'').includes('최')).length);
@@ -1235,12 +1235,39 @@ function downloadTextFile(filename, text, mime='text/csv;charset=utf-8;'){
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 500);
 }
+function isRepresentativeRegisteredMember(m){
+  if(!m) return false;
+  if(Number(m.registered_by_super_admin || 0) === 1) return true;
+  const txt = [m.registered_by_role, m.registered_by_name, m.registered_by_username].map(v=>String(v||'').replace(/\s+/g,'').toLowerCase()).join(' ');
+  return txt.includes('대표관리자') || txt.includes('최고관리자') || txt.includes('super') || txt.includes('owner') || String(m.registered_by_username||'').toLowerCase()==='admin';
+}
+function getSmsScopeLabel(scope){
+  if(scope === 'selected') return '선택회원';
+  if(scope === 'representative') return '대표관리자 등록회원';
+  if(scope === 'general') return '일반관리자 등록회원';
+  return '전체회원';
+}
+function getSmsScopeValue(){
+  return $('smsCsvScope')?.value || 'all';
+}
 function smsExportMembers(scope){
+  const valid = (m)=> String(m.status || '활성') !== '탈퇴' && normalizePhoneText(m.phone || '');
   if(scope === 'selected'){
     const m = getSelectedMember();
-    return m ? [m] : [];
+    return (m && valid(m)) ? [m] : [];
   }
-  return (membersCache || []).filter(m => String(m.status || '활성') !== '탈퇴' && normalizePhoneText(m.phone || ''));
+  let list = (membersCache || []).filter(valid);
+  if(scope === 'representative') list = list.filter(isRepresentativeRegisteredMember);
+  if(scope === 'general') list = list.filter(m => !isRepresentativeRegisteredMember(m));
+  return list;
+}
+function refreshSmsScopeInfo(){
+  const all = smsExportMembers('all').length;
+  const rep = smsExportMembers('representative').length;
+  const gen = smsExportMembers('general').length;
+  const selected = smsExportMembers('selected').length;
+  const info = $('smsScopeInfo');
+  if(info) info.textContent = `전체 ${all}명 · 대표관리자 등록 ${rep}명 · 일반관리자 등록 ${gen}명 · 현재 선택 ${selected}명`;
 }
 function buildSmsExportRows(scope='all'){
   const members = smsExportMembers(scope);
@@ -1308,8 +1335,8 @@ function downloadSmsCsv(scope='all'){
   const header = ['이름','전화번호','문자내용','회차','추천번호','등급','상태'];
   const csv = [header.map(csvCell).join(',')].concat(rows.map(r=>[r.name,r.phone,r.message,r.round,r.numbers,r.grade,r.status].map(csvCell).join(','))).join('\n');
   const roundPart = currentRound ? `${currentRound}회차_` : '';
-  downloadTextFile(`BBLOTTO_${roundPart}문자간다_업로드_${scope==='selected'?'선택회원':'전체회원'}.csv`, csv);
-  setText('smsExportInfo', `${rows.length}명 발송용 CSV 생성 완료 · 문자간다 대량등록에 업로드하세요.`);
+  downloadTextFile(`BBLOTTO_${roundPart}문자간다_업로드_${getSmsScopeLabel(scope)}.csv`, csv);
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 발송용 CSV 생성 완료 · 문자간다 대량등록에 업로드하세요.`);
   toast(`문자 발송용 CSV ${rows.length}건 생성 완료`);
 }
 function copyBulkSmsText(){
@@ -1325,10 +1352,12 @@ function copyBulkSmsText(){
 // RC6-5: 문자간다 CSV 버튼/템플릿 함수 HOTFIX
 function bbDownloadSmsCsvAll(){ try{ downloadSmsCsv('all'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
 function bbDownloadSmsCsvSelected(){ try{ downloadSmsCsv('selected'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
+function bbDownloadSmsCsvScoped(){ try{ downloadSmsCsv(getSmsScopeValue()); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
 function bbCopySmsBulk(){ try{ copyBulkSmsText(); }catch(e){ console.error(e); alert('문자 복사 중 오류: '+(e.message||e)); } }
 function bbApplyBulkTemplate(){ try{ applyBulkTemplateToPreview(); }catch(e){ console.error(e); alert('문구 적용 중 오류: '+(e.message||e)); } }
 window.bbDownloadSmsCsvAll = bbDownloadSmsCsvAll;
 window.bbDownloadSmsCsvSelected = bbDownloadSmsCsvSelected;
+window.bbDownloadSmsCsvScoped = bbDownloadSmsCsvScoped;
 window.bbCopySmsBulk = bbCopySmsBulk;
 window.bbApplyBulkTemplate = bbApplyBulkTemplate;
 
@@ -1558,6 +1587,7 @@ function bind(){
   $('copySmsBulk')?.addEventListener('click',copyBulkSmsText);
   $('applyBulkTemplate')?.addEventListener('click',applyBulkTemplateToPreview);
   $('bulkSmsTemplate')?.addEventListener('input',()=>{ saveWorkspaceState(); setText('smsExportInfo','수정한 문구가 CSV/복사에 적용됩니다.'); });
+  $('smsCsvScope')?.addEventListener('change',()=>{ refreshSmsScopeInfo(); setText('smsExportInfo', getSmsScopeLabel(getSmsScopeValue()) + ' 기준으로 CSV가 생성됩니다.'); });
   if(!window.__bbSmsExportDelegatedClickBound){
     window.__bbSmsExportDelegatedClickBound=true;
     document.addEventListener('click', function(e){
