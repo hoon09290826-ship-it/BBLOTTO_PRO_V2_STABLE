@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/style.css?v=rc43-20260706">
 </head>
 <body class="dashboardBody"><div id="toast"></div>
-<div id="app" class="app"><aside><div class="brand">BBLOTTO<br><span>PRO V50</span><small>RC4-4 · OWNER SCOPE</small></div><button class="nav active" data-tab="dashboard">대시보드</button><button class="nav" data-tab="generator">추천번호 생성</button><button class="nav" data-tab="members">회원 관리</button><button class="nav" data-tab="winning">당첨 확인</button><button class="nav" data-tab="stats">통계</button><button class="nav" data-tab="account">내 계정</button><button class="nav" data-tab="admin">관리자</button><button id="logout" class="logout">로그아웃</button></aside>
+<div id="app" class="app"><aside><div class="brand">BBLOTTO<br><span>PRO V50</span><small>RC4-5 · OPS CLEAN</small></div><button class="nav active" data-tab="dashboard">대시보드</button><button class="nav" data-tab="generator">추천번호 생성</button><button class="nav" data-tab="members">회원 관리</button><button class="nav" data-tab="winning">당첨 확인</button><button class="nav" data-tab="stats">통계</button><button class="nav" data-tab="account">내 계정</button><button class="nav" data-tab="admin">관리자</button><button id="logout" class="logout">로그아웃</button></aside>
 <main><header><div><p class="eyebrow">BBLOTTO ADMIN SYSTEM</p><h2 id="pageTitle">대시보드</h2></div><div class="user">관리자: <b id="who">admin</b></div></header>
 <section id="dashboard" class="panel active">
   <div class="rc44-hero">
@@ -63,5 +63,54 @@
 <section id="stats" class="panel"><div class="box"><h3>최근 통계 · 100회차 지원</h3><div class="btnrow"><button class="statBtn" data-limit="10">최근 10회</button><button class="statBtn" data-limit="20">최근 20회</button><button class="statBtn" data-limit="30">최근 30회</button><button class="statBtn" data-limit="50">최근 50회</button><button class="statBtn" data-limit="100">최근 100회</button></div><div id="statsBox" class="stats-view"></div></div><div class="box export-box"><h3>자료 내보내기</h3><div class="btnrow wrap"><button onclick="downloadApi('/api/export/members_csv')">회원 CSV</button><button onclick="downloadApi('/api/export/recommendations_csv')">추천번호 CSV</button><button onclick="downloadApi('/api/export/winning_csv')">당첨확인 CSV</button><button onclick="downloadApi('/api/export/excel')">통합 엑셀</button><button onclick="downloadApi('/api/export/pdf')">요약 PDF</button><button onclick="downloadApi('/api/export/report_txt')">요약 TXT</button><button onclick="downloadApi('/api/export/final_bundle')">전체 백업 ZIP</button><button onclick="downloadApi('/api/backup_db')">DB 백업</button></div><p class="hint">엑셀에서 바로 열 수 있도록 UTF-8 CSV로 저장됩니다.</p></div></section>
 
 <section id="account" class="panel"><div class="split"><div class="box"><h3>내 계정</h3><p class="hint">일반관리자도 본인 계정 정보와 비밀번호는 직접 변경할 수 있습니다.</p><label>아이디</label><input id="myUsername" disabled><label>관리자명</label><input id="myName" placeholder="관리자명"><label>연락처</label><input id="myPhone" placeholder="연락처"><label>메모</label><textarea id="myMemo" placeholder="본인 메모"></textarea><div class="btnrow"><button id="saveMyProfile" class="primary">내 정보 저장</button></div></div><div class="box"><h3>비밀번호 변경</h3><label>현재 비밀번호</label><input id="myCurrentPw" type="password" autocomplete="current-password"><label>새 비밀번호</label><input id="myNewPw" type="password" autocomplete="new-password"><label>새 비밀번호 확인</label><input id="myNewPw2" type="password" autocomplete="new-password"><div class="btnrow"><button id="saveMyPassword" class="primary">비밀번호 변경</button></div><hr><h3>로그인 정보</h3><p class="hint" id="myLoginInfo">로그인 정보를 불러오는 중입니다.</p></div></div></section>
-<section id="admin" class="panel"><div class="cards admin-kpi"><div class="stat"><b id="adminActiveCount">0</b><span>활성 관리자</span></div><div class="stat"><b id="adminSessionCount">0</b><span>접속 세션</span></div><div class="stat"><b id="adminTodayActions">0</b><span>오늘 활동</span></div><div class="stat"><b id="adminBackupCount">0</b><span>백업 파일</span></div></div><div class="admin-layout"><div id="adminSecurityBox" class="box super-only"><h3>보안 상태</h3><p id="adminSecurityStatus" class="hint">보안 상태를 불러오는 중입니다.</p><h3>활성 세션</h3><div id="activeSessions" class="hint">활성 세션을 불러오는 중입니다.</div></div><div id="adminAddBox" class="box super-only"><h3>관리자 추가</h3><label>아이디</label><input id="newAdmin"><label>관리자명</label><input id="newAdminName" placeholder="예: 강훈 팀장"><label>권한명</label><input id="newAdminRole" value="전체권한" placeholder="예: 전체권한"><label>비밀번호</label><input id="newAdminPw" type="password"><label>메모</label><input id="newAdminMemo" placeholder="예: 야간 담당"><button id="addAdmin" class="primary bigbtn">관리자 생성</button><p class="hint">모든 관리자는 동일 권한으로 사용할 수 있고, 생성/수정/비활성/로그인 기록은 활동 로그에 남습니다.</p><hr><h3>자동 로그아웃</h3><div class="form2"><input id="sessionTimeout" type="number" min="10" max="1440" placeholder="600"><button id="saveSessionTimeout">저장</button></div><p class="hint">10~1440분까지 설정 가능. 기본값은 600분(10시간)입니다.</p><hr><h3>관리자 목록 / 수정 / 활성 / 삭제</h3><div id="adminList" class="admin-list hint">관리자 목록을 불러오는 중입니다.</div></div><div id="adminBackupBox" class="box super-only"><h3>백업 관리</h3><div class="btnrow wrap"><button id="createBackup" class="primary">수동 백업 생성</button><button onclick="cleanupBackups()">오래된 백업 정리</button><button onclick="cleanupSessions()">만료 세션 정리</button><button onclick="downloadApi('/api/backup_db')">현재 DB 다운로드</button><button onclick="downloadApi('/api/export/members_csv')">회원 CSV</button><button onclick="downloadApi('/api/export/recommendations_csv')">추천번호 CSV</button></div><p class="hint">RC3-4부터 PostgreSQL은 JSON 백업으로 저장됩니다. 검증 후 복원할 수 있고, SQLite 로컬은 DB 파일 다운로드도 지원합니다.</p><div id="backupList" class="backup-list hint">백업 목록을 불러오는 중입니다.</div></div><div id="adminStatsBox" class="box super-only"><h3>관리자별 활동 통계</h3><div id="loginLogs"></div></div><div id="adminLogsBox" class="box super-only"><h3>활동 로그</h3><div id="activityLogs"></div></div></div></section>
-</main></div><script src="/app.js?v=rc44-20260706"></script></body></html>
+<section id="admin" class="panel">
+  <div class="admin-v3-head">
+    <div>
+      <h2>시스템 관리</h2>
+      <p>운영에 필요한 관리자, 백업, 활동기록, 기본설정만 간편하게 관리합니다.</p>
+    </div>
+    <div class="admin-v3-badges">
+      <span>활성 관리자 <b id="adminActiveCount">0</b></span>
+      <span>오늘 활동 <b id="adminTodayActions">0</b></span>
+      <span>백업 <b id="adminBackupCount">0</b></span>
+    </div>
+  </div>
+  <div class="admin-v3-grid">
+    <div id="adminAddBox" class="box admin-v3-card super-only admin-manager-card">
+      <h3>관리자</h3>
+      <div class="admin-form-grid">
+        <div><label>아이디</label><input id="newAdmin"></div>
+        <div><label>관리자명</label><input id="newAdminName" placeholder="예: 강훈"></div>
+        <div><label>권한명</label><input id="newAdminRole" value="전체권한" placeholder="예: 전체권한"></div>
+        <div><label>비밀번호</label><input id="newAdminPw" type="password"></div>
+      </div>
+      <label>메모</label><input id="newAdminMemo" placeholder="예: 야간 담당">
+      <button id="addAdmin" class="primary bigbtn">관리자 생성</button>
+      <div id="adminList" class="admin-list hint">관리자 목록을 불러오는 중입니다.</div>
+    </div>
+
+    <div id="adminBackupBox" class="box admin-v3-card super-only simple-backup">
+      <h3>백업</h3>
+      <button id="createBackup" class="primary bigbtn">지금 백업</button>
+      <p class="hint" id="backupSummary">매일 새벽 자동백업 / 최근 백업만 표시</p>
+      <div id="backupList" class="backup-list hint">백업 목록을 불러오는 중입니다.</div>
+    </div>
+
+    <div id="adminLogsBox" class="box admin-v3-card super-only simple-log">
+      <h3>활동로그</h3>
+      <p class="hint">운영자가 보기 쉬운 주요 활동만 표시합니다.</p>
+      <div id="activityLogs">활동 로그를 불러오는 중입니다.</div>
+    </div>
+
+    <div id="adminSecurityBox" class="box admin-v3-card super-only system-card">
+      <h3>시스템설정</h3>
+      <label>자동 로그아웃</label>
+      <div class="form2"><input id="sessionTimeout" type="number" min="10" max="1440" placeholder="600"><button id="saveSessionTimeout">저장</button></div>
+      <p id="adminSecurityStatus" class="hint">시스템 상태를 불러오는 중입니다.</p>
+      <div id="activeSessions" class="hint" style="display:none"></div>
+    </div>
+
+    <div id="adminStatsBox" class="box super-only" style="display:none"><div id="loginLogs"></div></div>
+  </div>
+</section>
+</main></div><script src="/app.js?v=rc45-ops-clean"></script></body></html>

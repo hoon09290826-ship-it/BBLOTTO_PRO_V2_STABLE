@@ -712,6 +712,64 @@ function applyAdminVisibility(isSuper){
   document.querySelectorAll('.nav[data-tab="admin"]').forEach(btn=>{ btn.style.display = isSuper ? '' : 'none'; });
 }
 
+
+let activityLogCache=[]; let activityLogFilter='all';
+function prettyAction(action=''){
+  const a=String(action||'').toUpperCase();
+  if(a.includes('LOGIN_FAILED')) return '로그인 실패';
+  if(a.includes('LOGIN')) return '로그인';
+  if(a.includes('LOGOUT')) return '로그아웃';
+  if(a.includes('CREATE_MEMBER')) return '회원 등록';
+  if(a.includes('UPDATE_MEMBER')) return '회원 수정';
+  if(a.includes('DELETE_MEMBER')) return '회원 삭제';
+  if(a.includes('GENERATE')) return '추천번호 생성';
+  if(a.includes('WIN') || a.includes('DRAW')) return '당첨 확인';
+  if(a.includes('BACKUP')) return '백업';
+  if(a.includes('SMS')) return '문구 저장';
+  return action || '활동';
+}
+function logGroup(action=''){
+  const a=String(action||'').toUpperCase();
+  if(a.includes('MEMBER')) return 'member';
+  if(a.includes('GENERATE') || a.includes('RECOMMEND')) return 'recommend';
+  if(a.includes('WIN') || a.includes('DRAW')) return 'winning';
+  if(a.includes('LOGIN') || a.includes('LOGOUT')) return 'login';
+  if(a.includes('BACKUP') || a.includes('RESTORE')) return 'backup';
+  return 'etc';
+}
+function shortDetail(action='', detail=''){
+  const d=String(detail||'').replace(/_/g,' ').trim();
+  const a=String(action||'').toUpperCase();
+  if(!d) return '';
+  if(a.includes('GENERATE')){
+    const round=(d.match(/(\d{3,4})회/)||[])[1];
+    const combos=(d.match(/(\d+)조합/)||[])[1];
+    return [round?round+'회':'', combos?combos+'조합':''].filter(Boolean).join(' · ') || d.slice(0,46);
+  }
+  if(a.includes('AUTO_WIN') || a.includes('DRAW')){
+    const round=(d.match(/(\d{3,4})회/)||[])[1];
+    return round ? round+'회 당첨 확인' : d.slice(0,46);
+  }
+  if(a.includes('CREATE_MEMBER')) return d.replace('회원 등록:','').trim().slice(0,46);
+  if(a.includes('BACKUP')) return d.split(':').pop().trim().slice(0,46);
+  return d.slice(0,46);
+}
+function renderActivityLogs(){
+  const rows=(activityLogCache||[]).filter(l=>{ const a=String(l.action||'').toUpperCase(); return !a.includes('LOGIN_FAILED') && !a.includes('SAVE_SMS'); }).slice(0,10);
+  const html=rows.map(l=>`<div class="simple-log-row"><div><time>${esc((l.created_at||'').slice(11,16) || (l.created_at||'').slice(5,16))}</time><b>${esc(l.username||'관리자')}</b><span>${esc(prettyAction(l.action))}</span>${shortDetail(l.action,l.detail)?`<small>${esc(shortDetail(l.action,l.detail))}</small>`:''}</div></div>`).join('');
+  setHTML('activityLogs', html || '<p class="hint">표시할 활동이 없습니다.</p>');
+}
+window.filterActivityLog=function(kind){ activityLogFilter=kind||'all'; renderActivityLogs(); };
+function renderBackupList(backups){
+  const rows=(backups||[]).slice(0,5).map(b=>{
+    const file=String(b.filename||''); const safe=esc(file); const isJson=file.toLowerCase().endsWith('.json');
+    const created=esc((b.created_at||'').slice(0,16) || file.replace(/^BBLOTTO.*?_BACKUP_/,'').slice(0,15));
+    const reason=esc((b.reason||'manual')==='auto_daily'?'자동백업':'수동백업');
+    return `<div class="simple-backup-row"><div><b>${created}</b><small>${reason}</small></div><div><button type="button" onclick="downloadApi('/api/backups/download/${encodeURIComponent(file)}')">다운로드</button>${isJson?` <button type="button" class="danger" onclick="restoreBackup('${safe}')">복원</button>`:''}</div></div>`;
+  }).join('');
+  setHTML('backupList', rows || '<p class="hint">백업 없음</p>');
+}
+
 async function loadAdmin(){
   try{ currentAdmin = await api('/api/me'); setText('who', currentAdmin.name || currentAdmin.username || '관리자'); startSessionWatcher(currentAdmin); renderMyAccount(); }catch(e){ currentAdmin=null; }
   const isSuper = !!currentAdmin?.is_super_admin;
@@ -730,12 +788,10 @@ async function loadAdmin(){
       setText('adminTodayActions', overview.today_actions ?? 0);
       setText('adminBackupCount', overview.backup_count ?? 0);
     }catch(e){}
-    try{ const logs=await api('/api/admin-logs'); setHTML('activityLogs', logs.map(l=>`<p><b>${esc(l.username||'')}</b> ${esc(l.action||'')} ${esc(l.detail||'')} <small>${esc(l.created_at||'')}</small></p>`).join('') || '로그 없음'); }catch(e){}
-    try{ const stats=await api('/api/admin-stats'); setHTML('loginLogs', stats.map(a=>`<p>${esc(a.username)}: 로그인 ${a.login_count||0}회 / 활동 ${a.total_actions||0}건 / 추천 ${a.generated_count||0}건</p>`).join('') || '통계 없음'); }catch(e){}
+    try{ activityLogCache=await api('/api/admin-logs'); renderActivityLogs(); }catch(e){ setHTML('activityLogs','활동 로그를 불러오지 못했습니다.'); }
     try{
       const sessions = await api('/api/sessions');
-      const html = sessions.map(s=>`<p><b>${esc(s.username)}</b> ${esc(s.ip||'')} <small>최근 ${esc(s.last_seen_at||s.created_at||'')} / 만료 ${esc(s.expires_at||'')}</small> <button onclick="revokeSession('${esc(s.token_tail)}')">종료</button></p>`).join('') || '활성 세션 없음';
-      const el = $('activeSessions'); if(el) el.innerHTML = html;
+      const el = $('activeSessions'); if(el) el.innerHTML = ''; // 간편 UI에서는 세션 상세 숨김
     }catch(e){}
   }else{
     setText('adminActiveCount', '-');
@@ -775,11 +831,8 @@ async function loadAdmin(){
   if(isSuper){
     try{
       const backups=await api('/api/backups');
-      setHTML('backupList', backups.slice(0,20).map(b=>{
-        const file=esc(b.filename||'');
-        const isJson=String(b.filename||'').toLowerCase().endsWith('.json');
-        return `<p><b>${file}</b><br><small>${esc(b.reason||'manual')} · ${esc(b.created_at||'')} · ${Number(b.size_bytes||0).toLocaleString()} bytes</small><br><button type="button" onclick="downloadApi('/api/backups/download/${encodeURIComponent(b.filename||'')}')">다운로드</button>${isJson?` <button type="button" onclick="validateBackup('${file}')">검증</button> <button type="button" class="danger" onclick="restoreBackup('${file}')">복원</button>`:''}</p>`;
-      }).join('') || '백업 없음');
+      renderBackupList(backups);
+      if($('backupSummary')) $('backupSummary').textContent = `최근 백업 ${backups.length}개 · 매일 자동백업 유지`;
     }catch(e){}
   }
   try{
