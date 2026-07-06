@@ -165,11 +165,12 @@ class PgCursorCompat:
             else:
                 out.append(ch)
         s=''.join(out)
-        # psycopg2는 SQL 문자열 안의 리터럴 %도 포맷 문자로 해석합니다.
-        # SQLite 호환 SQL의 LIKE '%값%' 패턴이 PostgreSQL에서
-        # IndexError: tuple index out of range 를 만들 수 있어 %s 플레이스홀더가
-        # 아닌 모든 %를 %%로 이스케이프합니다.
-        s = re.sub(r'%(?!s)', '%%', s)
+        # psycopg2는 SQL 문자열 안의 %도 포맷 기호로 해석한다.
+        # 기존 SQLite 호환 SQL에 LIKE '%값%' 같은 리터럴이 있으면
+        # "tuple index out of range"가 발생하므로, 실제 파라미터 자리표시자 %s만 남기고
+        # 나머지 %는 %%로 이스케이프한다.
+        if '%' in s:
+            s = s.replace('%', '%%').replace('%%s', '%s')
         # PostgreSQL upsert/ignore 호환
         if re.match(r'\s*INSERT\s+INTO\s+draws\s*\(', s, re.I) and 'ON CONFLICT' not in s:
             s += ' ON CONFLICT (round_no) DO UPDATE SET draw_date=EXCLUDED.draw_date, numbers=EXCLUDED.numbers, bonus=EXCLUDED.bonus, source=EXCLUDED.source, updated_at=EXCLUDED.updated_at'
@@ -6499,19 +6500,3 @@ def _engine_summary(details, st):
         }
     }
 # ===================== /RC5-5 RECOMMEND ENGINE UPGRADE =====================
-
-
-@app.get('/api/rc6-8/status')
-def rc6_8_status(authorization: str|None = Header(default=None)):
-    admin = require_admin(authorization)
-    with con() as c:
-        members = c.execute('SELECT COUNT(*) c FROM members').fetchone()['c']
-        admins = c.execute('SELECT COUNT(*) c FROM admins').fetchone()['c']
-    return {
-        'ok': True,
-        'version': 'RC6.8_STABLE',
-        'engine': DB_ENGINE,
-        'members': members,
-        'admins': admins,
-        'fixes': ['postgres_percent_escape', 'members_query_stable', 'sms_csv_target_split']
-    }
