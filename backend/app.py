@@ -2249,7 +2249,7 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
     safe_count=max(1, min(50, int(req.count or 10)))
     safe_round=max(1, int(req.round_no or 1))
     safe_mode=req.mode or 'balanced'
-    combos, details, st = make_premium_combos(safe_count, req.fixed, excluded_value, safe_mode, member_grade)
+    combos, details, st = make_premium_combos(safe_count, req.fixed, excluded_value, safe_mode, member_grade, member_id=member_id)
     details = rc37_enrich_details(combos, details)
     combos, details = rc38_portfolio_reorder(combos, details)
     details = rc37_enrich_details(combos, details)
@@ -5803,3 +5803,303 @@ def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
             clean.append(line)
     return '\n'.join(clean[:4])
 # ===================== /RC4-5 DEEP RECOMMEND ENGINE =====================
+
+# ===================== RC5-5 RECOMMEND ENGINE UPGRADE =====================
+# 추천번호 생성 품질 강화: 등급별 후보 강도, 최근 추천 중복 방지, 조합별 다양성 강화.
+RC55_ENGINE_VERSION = 'RC5-5_DEEP_RECOMMEND_UPGRADE'
+
+def _rc55_recent_recommendation_combos(member_id=None, limit=180):
+    """최근 생성 이력에서 추천 조합을 가져와 동일/유사 조합 반복을 줄입니다."""
+    out = []
+    try:
+        with con() as c:
+            cols = table_cols(c, 'recommendations')
+            if 'numbers' not in cols:
+                return out
+            if member_id and 'member_id' in cols:
+                rs = c.execute('SELECT numbers FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT ?', (member_id, limit)).fetchall()
+            else:
+                rs = c.execute('SELECT numbers FROM recommendations ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+            for r in rs:
+                try:
+                    data = json.loads(r['numbers'] or '[]')
+                except Exception:
+                    data = []
+                if isinstance(data, list):
+                    for item in data:
+                        nums = item.get('numbers') if isinstance(item, dict) else item
+                        nums = parse_nums(nums)
+                        if len(nums) == 6:
+                            out.append(tuple(sorted(nums)))
+                if len(out) >= limit:
+                    break
+    except Exception:
+        return []
+    return out[:limit]
+
+def _rc55_too_close_to_history(combo, history, max_overlap=4):
+    s = set(parse_nums(combo))
+    for h in history or []:
+        hs = set(parse_nums(h))
+        if len(s & hs) > max_overlap:
+            return True
+    return False
+
+def _rc55_combo_quality_bonus(combo, st, ext, usage=None, member_grade='일반'):
+    nums = sorted(parse_nums(combo))
+    sig = _ai_v1_signature(nums)
+    digits = [n % 10 for n in nums]
+    decade = [sum(1 for n in nums if lo <= n <= hi) for lo, hi in [(1,9),(10,19),(20,29),(30,39),(40,45)]]
+    bonus = 0.0
+    # 가장 안정적인 합계/AC/구간에 가산점
+    if 115 <= sig.get('sum', 0) <= 170:
+        bonus += 1.2
+    if 7 <= sig.get('ac', 0) <= 10:
+        bonus += 1.1
+    if sig.get('odd') in (2, 3, 4):
+        bonus += 0.8
+    if len(set(digits)) >= 5:
+        bonus += 0.9
+    if max(decade or [0]) <= 2:
+        bonus += 0.7
+    # 최근 추천에서 과사용된 번호는 감점해 회원에게 비슷한 느낌이 반복되지 않게 함
+    if usage:
+        bonus -= sum(max(0, usage.get(n, 0) - 1) * 0.18 for n in nums)
+    g = rc45_grade_label(member_grade)
+    if g == '1등':
+        bonus += 0.9
+    elif g == '2등':
+        bonus += 0.45
+    return bonus
+
+def _rc55_grade_params(grade='일반'):
+    g = rc45_grade_label(grade)
+    if g == '1등':
+        return {
+            'base': 12000, 'mult': 1050, 'tries': 36,
+            'first': (2, 1, 3, 1), 'second': (3, 1, 3, 2), 'third': (4, 2, 3, 3),
+            'history_overlap': 4, 'hot_boost': 2.4, 'overdue_boost': 1.6, 'mid_boost': 0.9,
+        }
+    if g == '2등':
+        return {
+            'base': 9000, 'mult': 820, 'tries': 30,
+            'first': (3, 1, 3, 1), 'second': (4, 2, 3, 2), 'third': (5, 2, 4, 3),
+            'history_overlap': 4, 'hot_boost': 1.8, 'overdue_boost': 1.25, 'mid_boost': 0.6,
+        }
+    return {
+        'base': 7000, 'mult': 640, 'tries': 26,
+        'first': (4, 2, 4, 2), 'second': (5, 2, 4, 3), 'third': (6, 3, 4, 4),
+        'history_overlap': 5, 'hot_boost': 1.25, 'overdue_boost': 0.9, 'mid_boost': 0.35,
+    }
+
+def make_premium_combos(count=10, fixed='', excluded='', mode='balanced', member_grade='일반', member_id=None):
+    """RC5-5: 추천번호 생성 엔진 업그레이드.
+    - 1등/2등/일반 등급별 후보군 강도 차등
+    - 최근 추천 이력과 유사한 조합 제한
+    - 번호/페어/패턴 중복 제한 강화
+    - 조합 간 분산성과 안정성 동시 반영
+    """
+    member_grade = rc45_grade_label(member_grade)
+    gp = _rc55_grade_params(member_grade)
+    st = latest_stats(300)
+    fixed_set = set(parse_nums(fixed)); excluded_set = set(parse_nums(excluded))
+    fixed_set = {n for n in fixed_set if n not in excluded_set}
+    if len(fixed_set) > 6:
+        fixed_set = set(sorted(fixed_set)[:6])
+    pool = [n for n in range(1, 46) if n not in excluded_set and n not in fixed_set]
+    target = max(1, min(50, int(count or 10)))
+    if len(pool) + len(fixed_set) < 6:
+        raise HTTPException(400, '고정수/제외수를 확인하세요. 선택 가능한 번호가 부족합니다.')
+
+    profile, ext = _ai_v1_profile(st, mode)
+    hot = ext.get('hot300') or []
+    cold = ext.get('cold300') or []
+    overdue = ext.get('overdue300') or []
+    mid = ext.get('mid300') or []
+    # 등급별 가중치 강화
+    for n in range(1, 46):
+        if n in hot[:14]:
+            profile[n] = profile.get(n, 1) + gp['hot_boost']
+        if n in overdue[:14]:
+            profile[n] = profile.get(n, 1) + gp['overdue_boost']
+        if n in mid[:18]:
+            profile[n] = profile.get(n, 1) + gp['mid_boost']
+        if n in cold[:10] and member_grade == '1등':
+            profile[n] = profile.get(n, 1) + 0.35
+
+    past_draws = {tuple(sorted(d['numbers'])) for d in st.get('draws', []) if len(d.get('numbers', [])) == 6}
+    recent_history = _rc55_recent_recommendation_combos(member_id=member_id, limit=220)
+    recent_usage = collections.Counter(n for combo in recent_history[:80] for n in combo)
+
+    buckets = {
+        'hot': [n for n in hot[:24] if n in pool],
+        'cold': [n for n in cold[:24] if n in pool],
+        'overdue': [n for n in overdue[:24] if n in pool],
+        'mid': [n for n in mid[:28] if n in pool],
+        'low': [n for n in range(1, 16) if n in pool],
+        'middle': [n for n in range(16, 31) if n in pool],
+        'high': [n for n in range(31, 46) if n in pool],
+        'all': pool[:],
+    }
+    # 다양한 계획을 섞어 매번 후보군 성격이 달라지도록 구성
+    plans = [
+        ['hot','cold','overdue','mid','all','all'],
+        ['hot','mid','overdue','low','middle','high'],
+        ['mid','hot','cold','overdue','all','all'],
+        ['low','middle','high','hot','overdue','all'],
+        ['cold','mid','hot','all','overdue','all'],
+        ['overdue','hot','middle','high','low','all'],
+    ]
+    if member_grade == '1등':
+        plans += [
+            ['hot','overdue','mid','cold','low','high'],
+            ['hot','hot','overdue','mid','middle','all'],
+            ['overdue','mid','hot','cold','all','all'],
+        ]
+    elif member_grade == '2등':
+        plans += [
+            ['hot','cold','overdue','mid','middle','all'],
+            ['mid','hot','overdue','low','high','all'],
+        ]
+    if mode == 'aggressive':
+        plans += [['hot','hot','overdue','high','all','all'], ['hot','mid','high','overdue','all','all']]
+    elif mode == 'conservative':
+        plans += [['mid','mid','cold','middle','all','all'], ['cold','overdue','mid','low','middle','all']]
+
+    candidates = []
+    seen = set()
+    tries = 0
+    needed = max(gp['base'], target * gp['mult'])
+    max_tries = max(140000, needed * gp['tries'])
+    while len(candidates) < needed and tries < max_tries:
+        tries += 1
+        nums = set(fixed_set)
+        plan = random.choice(plans)[:]
+        random.shuffle(plan)
+        for b in plan:
+            if len(nums) >= 6:
+                break
+            usable = [n for n in buckets.get(b, pool) if n not in nums]
+            if usable:
+                nums.update(_weighted_pick(usable, [profile.get(n, 1) for n in usable], 1))
+        while len(nums) < 6:
+            usable = [n for n in pool if n not in nums]
+            nums.update(_weighted_pick(usable, [profile.get(n, 1) for n in usable], 1))
+        arr = tuple(sorted(nums))
+        if arr in seen or arr in past_draws:
+            continue
+        if _rc55_too_close_to_history(arr, recent_history, max_overlap=gp['history_overlap']):
+            continue
+        ok, _reason = _rc42_combo_ok(arr, past=past_draws, fixed_set=fixed_set)
+        if not ok:
+            continue
+        seen.add(arr)
+        base_score = _rc42_adjusted_score(arr, st, mode, ext, profile)
+        score = base_score + _rc55_combo_quality_bonus(arr, st, ext, recent_usage, member_grade)
+        candidates.append((round(max(70.0, min(99.7, score)), 1), list(arr)))
+
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+    selected = []
+    usage = collections.Counter()
+    pair_usage = collections.Counter()
+    pattern_usage = collections.Counter()
+
+    def can_add(combo, max_number_use, max_pair_use, max_overlap, max_pattern_use):
+        pairs = [tuple(sorted(p)) for p in itertools.combinations(combo, 2)]
+        pattern = _rc42_pattern_key(combo)
+        if any(usage[n] >= max_number_use for n in combo if n not in fixed_set):
+            return False
+        if any(pair_usage[p] >= max_pair_use for p in pairs):
+            return False
+        if pattern_usage[pattern] >= max_pattern_use:
+            return False
+        if not all(len(set(combo) & set(prev)) <= max_overlap for prev in selected):
+            return False
+        return True
+
+    def add_combo(combo):
+        selected.append(combo)
+        usage.update(combo)
+        pair_usage.update([tuple(sorted(p)) for p in itertools.combinations(combo, 2)])
+        pattern_usage.update([_rc42_pattern_key(combo)])
+
+    for limits in (gp['first'], gp['second'], gp['third'], (6, 3, 4, 5)):
+        if len(selected) >= target:
+            break
+        for score, combo in candidates:
+            if combo in selected:
+                continue
+            if can_add(combo, *limits):
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+    if len(selected) < target:
+        for score, combo in candidates:
+            if combo not in selected:
+                add_combo(combo)
+            if len(selected) >= target:
+                break
+
+    details = [_rc42_detail(c, st, mode, ext, profile) for c in selected[:target]]
+    # 실제 최종 점수도 RC5-5 기준으로 재보정
+    for d in details:
+        nums = d.get('numbers') or []
+        score = float(d.get('score') or 0) + _rc55_combo_quality_bonus(nums, st, ext, recent_usage, member_grade)
+        score = round(max(70.0, min(99.7, score)), 1)
+        d['score'] = d['ai_score'] = d['vip_score'] = score
+        d['member_grade'] = member_grade
+        d['grade_strength'] = rc45_grade_strength_text(member_grade)
+        d['engine_version'] = RC55_ENGINE_VERSION
+        d['grade'] = '1등' if member_grade == '1등' else '2등' if member_grade == '2등' else '일반'
+        tags = [t for t in (d.get('tags') or []) if not str(t).startswith('RC')]
+        for tag in ['최근 추천 중복 제한', '구간·끝수 분산', '조합 간 유사도 제한']:
+            if tag not in tags:
+                tags.append(tag)
+        d['tags'] = tags[:6]
+        d['reason_text'] = ' · '.join(tags[:5])
+        d['quality_rule'] = '홀짝·구간·끝수·간격·AC·연속수·최근 추천 유사도까지 종합 검토'
+    details.sort(key=lambda x: -float(x.get('score') or 0))
+    selected_sorted = [d['numbers'] for d in details]
+
+    st.update(ext)
+    st['ai_v1_candidates'] = len(candidates)
+    st['ai_v1_attempts'] = tries
+    st['engine_version'] = RC55_ENGINE_VERSION
+    st['member_grade'] = member_grade
+    st['grade_strength'] = rc45_grade_strength_text(member_grade)
+    st['rc55_history_checked'] = len(recent_history)
+    st['rc42_portfolio'] = {
+        'max_overlap': max((len(set(a) & set(b)) for i, a in enumerate(selected_sorted) for b in selected_sorted[i+1:]), default=0),
+        'unique_patterns': len({_rc42_pattern_key(c) for c in selected_sorted}),
+        'number_usage_max': max(usage.values()) if usage else 0,
+        'recent_history_checked': len(recent_history),
+    }
+    return selected_sorted[:target], details[:target], st
+
+def _engine_summary(details, st):
+    scores = [float(d.get('score') or d.get('ai_score') or d.get('vip_score') or 0) for d in (details or []) if (d.get('score') or d.get('ai_score') or d.get('vip_score'))]
+    grade = rc45_grade_label(st.get('member_grade') or (details[0].get('member_grade') if details else '일반'))
+    return {
+        'version': RC55_ENGINE_VERSION,
+        'engine_version': RC55_ENGINE_VERSION,
+        'phase': 'RC5-5',
+        'member_grade': grade,
+        'grade_strength': rc45_grade_strength_text(grade),
+        'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
+        'max_score': round(max(scores), 1) if scores else 0,
+        'min_score': round(min(scores), 1) if scores else 0,
+        'candidate_count': int(st.get('ai_v1_candidates') or 0),
+        'selected_count': len(details or []),
+        'latest_round': st.get('latest_round') or 0,
+        'rc55_report': {
+            'grade_policy': '1등/2등/일반 등급별 후보군과 선별 강도 차등',
+            'portfolio': st.get('rc42_portfolio') or {},
+            'summary': '최근 추천 이력과 유사한 조합을 줄이고 분산형 후보를 우선 선별했습니다.'
+        },
+        # 화면 호환용 기존 키 유지
+        'rc45_report': {
+            'summary': '최근 흐름과 누적 통계를 함께 반영한 심층 추천 결과입니다.',
+            'portfolio': st.get('rc42_portfolio') or {},
+        }
+    }
+# ===================== /RC5-5 RECOMMEND ENGINE UPGRADE =====================
