@@ -390,7 +390,19 @@ function renderEngine(engine, details=[]){
   </div>`;
 }
 
-function normalizeSearchText(v){ return String(v||'').toLowerCase().replace(/[\s\-_.()]/g,'').trim(); }
+function normalizeSearchText(v){ return String(v||'').toLowerCase().replace(/[\s\-_.()\[\]{}+~`'"·,/:;]/g,'').trim(); }
+function ensureMemberSearchStatus(){
+  const filter = document.querySelector('.member-filter');
+  if(!filter) return null;
+  let el = $('memberSearchStatus');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'memberSearchStatus';
+    el.className = 'member-search-status hint';
+    filter.insertAdjacentElement('afterend', el);
+  }
+  return el;
+}
 function normalizePhoneText(v){ return String(v||'').replace(/\D/g,''); }
 function getMemberSearchText(m){
   return normalizeSearchText([
@@ -424,6 +436,12 @@ function applyMemberFilters(){
     return (pri[a.priority||'보통']??9)-(pri[b.priority||'보통']??9) || String(b.created_at||'').localeCompare(String(a.created_at||''));
   });
   memberFilteredCache = list;
+  const st = ensureMemberSearchStatus();
+  if(st){
+    const rawQ = $('memberSearch')?.value || '';
+    const activeFilters = [rawQ && `검색어 "${rawQ}"`, status && `상태 ${status}`, grade && `등급 ${grade}`, priority && `우선순위 ${priority}`].filter(Boolean);
+    st.textContent = activeFilters.length ? `검색 결과 ${list.length.toLocaleString()}명 · ${activeFilters.join(' · ')}` : `전체 회원 ${list.length.toLocaleString()}명`;
+  }
   const maxPage = Math.max(1, Math.ceil(list.length / memberPageSize));
   if(memberPage > maxPage) memberPage = maxPage;
   if(memberPage < 1) memberPage = 1;
@@ -484,7 +502,7 @@ function fillMemberSelect(list){
 
 async function loadMembers(){
   const params = new URLSearchParams();
-  params.set('limit', '1000');
+  params.set('limit', '5000');
   const sort=$('memberSort')?.value||'priority';
   if(sort) params.set('sort', sort);
   // 서버에는 권한 범위만 맡기고, 검색/필터/페이지는 전체 목록 기준으로 프론트에서 처리합니다.
@@ -1367,6 +1385,7 @@ function bind(){
   $('clearMember')?.addEventListener('click',()=>['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,'')));
   $('memberDetailBack')?.addEventListener('click',()=>openPanel('members','회원 관리'));
   $('memberSearch')?.addEventListener('input',()=>refreshMemberView());
+  $('memberSearch')?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); refreshMemberView(); } });
   $('memberStatusFilter')?.addEventListener('change',()=>refreshMemberView());
   $('memberGradeFilter')?.addEventListener('change',()=>refreshMemberView());
   $('memberPriorityFilter')?.addEventListener('change',()=>refreshMemberView());

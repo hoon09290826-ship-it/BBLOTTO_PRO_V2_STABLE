@@ -26,7 +26,7 @@ EXPORT_DIR = Path(os.getenv('BBLOTTO_EXPORT_DIR', str(DB_DIR / 'exports'))); EXP
 DB = DB_DIR / 'bblotto_v34.db'
 FRONT = BASE / 'frontend'
 
-app = FastAPI(title='BBLOTTO PRO V2 STABLE RC4-4')
+app = FastAPI(title='BBLOTTO PRO V2 STABLE RC5-9')
 RC3_8_VERSION = 'V2_STABLE_RC3_15'
 RC3_9_VERSION = 'V2_STABLE_RC3_15'
 RC3_10_VERSION = 'V2_STABLE_RC3_15'
@@ -1319,7 +1319,7 @@ class SettingReq(BaseModel): key:str; value:str
 
 @app.get('/api/health')
 def health():
-    return {'ok': True, 'app': 'BBLOTTO PRO V50', 'phase': 'RC3_7_STABILITY_UI_DB', 'time': now(), 'db_engine': DB_ENGINE, 'database_url_set': bool(DATABASE_URL), 'db_path': str(DB), 'persistent_dir': str(DB_DIR)}
+    return {'ok': True, 'app': 'BBLOTTO PRO V2 STABLE', 'phase': 'RC5_9_GITHUB_DEPLOY_READY', 'time': now(), 'db_engine': DB_ENGINE, 'database_url_set': bool(DATABASE_URL), 'db_path': str(DB), 'persistent_dir': str(DB_DIR)}
 
 @app.get('/api/persistence_status')
 def persistence_status(authorization: str|None = Header(default=None)):
@@ -1967,17 +1967,31 @@ def backup_download(filename:str, token: str|None=None, authorization: str|None 
 
 
 @app.get('/api/members')
-def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:str='priority', limit:int=500, authorization: str|None = Header(default=None)):
+def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:str='priority', limit:int=5000, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     wh=[]; args=[]
     scope_sql, scope_args = member_scope_condition(admin, 'm')
     if scope_sql:
         wh.append(scope_sql); args += scope_args
     if q:
-        wh.append('(m.name LIKE ? OR REPLACE(REPLACE(REPLACE(m.phone,"-","")," ",""),".","") LIKE ? OR m.phone LIKE ? OR m.grade LIKE ? OR m.memo LIKE ? OR COALESCE(m.source,"") LIKE ? OR COALESCE(m.priority,"") LIKE ? OR COALESCE(a.name,"") LIKE ? OR COALESCE(a.username,"") LIKE ?)')
-        like=f'%{q}%'
-        digits='%' + ''.join(ch for ch in q if ch.isdigit()) + '%'
-        args += [like, digits, like, like, like, like, like, like, like]
+        q_norm = re.sub(r'[\s\-_.()\[\]{}+~`\'"·,/:;]', '', str(q or '').lower())
+        q_digits = ''.join(ch for ch in str(q or '') if ch.isdigit())
+        wh.append('''(
+            LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(m.name,''), ' ', ''), '-', ''), '.', ''), '(', ''), ')', '')) LIKE ?
+            OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(m.phone,''), '-', ''), ' ', ''), '.', ''), '(', ''), ')', '') LIKE ?
+            OR LOWER(COALESCE(m.phone,'')) LIKE ?
+            OR LOWER(COALESCE(m.grade,'')) LIKE ?
+            OR LOWER(COALESCE(m.status,'')) LIKE ?
+            OR LOWER(COALESCE(m.memo,'')) LIKE ?
+            OR LOWER(COALESCE(m.source,'')) LIKE ?
+            OR LOWER(COALESCE(m.priority,'')) LIKE ?
+            OR LOWER(COALESCE(a.name,'')) LIKE ?
+            OR LOWER(COALESCE(a.username,'')) LIKE ?
+        )''')
+        like=f'%{str(q or '').lower()}%'
+        norm_like=f'%{q_norm}%'
+        digits_like='%' + q_digits + '%'
+        args += [norm_like, digits_like if q_digits else norm_like, like, like, like, like, like, like, like, like]
     if status:
         wh.append('COALESCE(m.status, "활성")=?')
         args.append(status)
@@ -1996,7 +2010,7 @@ def list_members(q:str='', status:str='', grade:str='', priority:str='', sort:st
         'status':'COALESCE(m.status,"활성") ASC, m.id DESC'
     }
     order=sort_map.get(sort, sort_map['priority'])
-    limit=max(1, min(int(limit or 500), 1000))
+    limit=max(1, min(int(limit or 5000), 5000))
     sql="""
         SELECT m.*,
                COALESCE(a.name, a.username, '미지정') AS registered_by_name,

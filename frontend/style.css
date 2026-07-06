@@ -186,3 +186,12 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 .pager-actions .page-btn.active{background:#d4af37;color:#111;font-weight:800}
 .draw-page-list p{margin:8px 0;padding:8px 10px;border:1px solid rgba(212,175,55,.14);border-radius:10px;background:rgba(255,255,255,.025)}
 @media(max-width:720px){.pager{align-items:flex-start}.pager-actions{width:100%}.pager-actions button{flex:1;min-width:54px}.pager-actions select{width:100%}}
+
+/* RC5-9: 회원검색 상태 표시 */
+.member-search-status{
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+}

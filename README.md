@@ -23,3 +23,18 @@ GitHub/Railway 업로드용으로 정리한 버전입니다.
 pip install -r requirements.txt
 python start.py
 ```
+
+
+## RC5-9 추가 수정
+- 회원검색 결과 개수 표시 추가
+- 검색어 Enter 입력 시 즉시 검색 갱신
+- 전화번호/공백/하이픈/괄호/특수문자 제거 검색 강화
+- 회원 목록 최대 로딩 5,000명으로 확장
+- `/api/health` 배포 상태값 RC5-9로 갱신
+- `.env.example` 추가
+
+## Railway 업로드 순서
+1. 이 ZIP 압축을 풀고 GitHub 새 저장소에 업로드합니다.
+2. Railway에서 `New Project → Deploy from GitHub repo`를 선택합니다.
+3. PostgreSQL을 붙일 경우 Railway Variables에 `DATABASE_URL`이 자동 연결되어 있는지 확인합니다.
+4. 배포 완료 후 `/api/health`가 `ok: true`로 나오면 정상입니다.
