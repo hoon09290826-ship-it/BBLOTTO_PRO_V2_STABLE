@@ -1266,6 +1266,26 @@ function getBulkSmsTemplate(){
   const custom = normalizeText($('bulkSmsTemplate')?.value || '').trim();
   return custom || normalizeText($('template')?.value || '').trim() || normalizeText(currentSms || '').trim();
 }
+
+// RC6-5: 독립 템플릿 치환 함수. bulkSmsTemplate 사용 시 필수입니다.
+function applyTemplate(template, member, round, combos, analysis){
+  const tpl = normalizeText(template || '').trim() || getDefaultTemplate();
+  const name = member?.name || member?.member_name || '회원';
+  const today = new Date().toLocaleDateString('ko-KR');
+  const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
+  const numbers = formatComboLines(combos || currentCombos);
+  return tpl
+    .replaceAll('{회원명}', name)
+    .replaceAll('{회원이름}', name)
+    .replaceAll('{이름}', name)
+    .replaceAll('{회차}', String(round || currentRound || '-'))
+    .replaceAll('{추천번호}', numbers)
+    .replaceAll('{번호}', numbers)
+    .replaceAll('{분석}', analysisText)
+    .replaceAll('{발송일}', today)
+    .replaceAll('{AI점수}', String(getBestAiScore()));
+}
+
 function buildBulkSmsMessage(member, round, combos, analysis){
   const tpl = getBulkSmsTemplate();
   if(tpl){
@@ -1302,7 +1322,7 @@ function copyBulkSmsText(){
 }
 
 
-// RC6-4: 문자간다 CSV 버튼/전화번호 정규화 HOTFIX
+// RC6-5: 문자간다 CSV 버튼/템플릿 함수 HOTFIX
 function bbDownloadSmsCsvAll(){ try{ downloadSmsCsv('all'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
 function bbDownloadSmsCsvSelected(){ try{ downloadSmsCsv('selected'); }catch(e){ console.error(e); alert('CSV 생성 중 오류: '+(e.message||e)); } }
 function bbCopySmsBulk(){ try{ copyBulkSmsText(); }catch(e){ console.error(e); alert('문자 복사 중 오류: '+(e.message||e)); } }
