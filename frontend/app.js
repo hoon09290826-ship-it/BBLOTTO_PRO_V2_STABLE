@@ -770,6 +770,13 @@ function renderBackupList(backups){
   setHTML('backupList', rows || '<p class="hint">백업 없음</p>');
 }
 
+function switchAdminPanel(panel){
+  document.querySelectorAll('.admin-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.adminPanel===panel));
+  document.querySelectorAll('[data-admin-panel-box]').forEach(box=>box.classList.toggle('active', box.dataset.adminPanelBox===panel));
+}
+function openAdminCreateModal(){ const m=$('adminCreateModal'); if(m) m.style.display='flex'; setTimeout(()=>$('newAdmin')?.focus(),30); }
+function closeAdminCreateModal(){ const m=$('adminCreateModal'); if(m) m.style.display='none'; }
+
 async function loadAdmin(){
   try{ currentAdmin = await api('/api/me'); setText('who', currentAdmin.name || currentAdmin.username || '관리자'); startSessionWatcher(currentAdmin); renderMyAccount(); }catch(e){ currentAdmin=null; }
   const isSuper = !!currentAdmin?.is_super_admin;
@@ -1100,7 +1107,7 @@ async function addAdmin(){
   await api('/api/admins',{method:'POST',body});
   ['newAdmin','newAdminName','newAdminPw','newAdminMemo'].forEach(x=>setValue(x,''));
   setValue('newAdminRole','전체권한');
-  toast('관리자를 생성했습니다.'); await loadAdmin();
+  toast('관리자를 생성했습니다.'); closeAdminCreateModal(); await loadAdmin();
 }
 window.deleteAdmin=safe(async function(id, username){
   if(!confirm(`관리자 ${username || id} 계정을 완전히 삭제할까요?\n삭제하면 해당 관리자는 로그인할 수 없습니다.`)) return;
@@ -1221,6 +1228,11 @@ function bind(){
   $('checkWinning')?.addEventListener('click',safe(checkWinning));
   $('saveDraw')?.addEventListener('click',safe(saveDraw));
   $('addAdmin')?.addEventListener('click',safe(addAdmin));
+  $('openAdminModal')?.addEventListener('click',openAdminCreateModal);
+  $('closeAdminModal')?.addEventListener('click',closeAdminCreateModal);
+  $('cancelAdminModal')?.addEventListener('click',closeAdminCreateModal);
+  $('adminCreateModal')?.addEventListener('click',e=>{ if(e.target && e.target.id==='adminCreateModal') closeAdminCreateModal(); });
+  document.querySelectorAll('.admin-tab-btn').forEach(b=>b.addEventListener('click',()=>switchAdminPanel(b.dataset.adminPanel)));
   $('saveSessionTimeout')?.addEventListener('click',safe(saveSessionTimeout));
   $('createBackup')?.addEventListener('click',safe(createBackup));
   $('rc44AutoUpdate')?.addEventListener('click',safe(rc44RunAutoUpdate));
