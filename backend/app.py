@@ -6628,6 +6628,13 @@ def _smsganda_clean_phone(value):
 def _safe_download_name(name):
     return re.sub(r'[^0-9A-Za-z_\-가-힣]', '_', str(name or 'download'))[:120] or 'download'
 
+def _smsganda_cell_text(value):
+    # RC7-11: 문자간다 구형 미리보기 호환을 위해 셀 내부 줄바꿈을 CRLF로 고정한다.
+    # Excel Alt+Enter와 동일한 줄바꿈을 최대한 유지하도록 \n/\r/문자열 \\n 모두 정규화한다.
+    text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.replace('\n', '\r\n')
+
 @app.post('/api/export/smsganda_xls')
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
     require_admin(authorization)
@@ -6660,7 +6667,7 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
 
     # 문자간다 제공 샘플 형식 그대로 맞춥니다.
     # 샘플 1행: 이름, 휴대전화, [*1*], [*2*], [*3*], [*4*]
-    # 실제 데이터는 2행부터 A열=이름, B열=휴대전화, C~F열은 공란으로 저장합니다.
+    # 실제 데이터는 2행부터 A열=이름, B열=휴대전화, C~F열=[*1*]~[*4*] 치환값으로 저장합니다.
     wb = xlwt.Workbook(encoding='cp949')
     ws = wb.add_sheet('Sheet1')
 
@@ -6672,6 +6679,10 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
 
     text_style = xlwt.XFStyle()
     text_style.num_format_str = '@'
+    text_alignment = xlwt.Alignment()
+    text_alignment.wrap = 1
+    text_alignment.vert = xlwt.Alignment.VERT_TOP
+    text_style.alignment = text_alignment
 
     headers = ['이름', '휴대전화', '[*1*]', '[*2*]', '[*3*]', '[*4*]']
     for col, header in enumerate(headers):
@@ -6680,10 +6691,13 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     for idx, (name, phone, seg1, seg2, seg3, seg4) in enumerate(cleaned, start=1):
         ws.write(idx, 0, name, text_style)
         ws.write(idx, 1, phone, text_style)
-        ws.write(idx, 2, seg1, text_style)
-        ws.write(idx, 3, seg2, text_style)
-        ws.write(idx, 4, seg3, text_style)
-        ws.write(idx, 5, seg4, text_style)
+        ws.write(idx, 2, _smsganda_cell_text(seg1), text_style)
+        ws.write(idx, 3, _smsganda_cell_text(seg2), text_style)
+        ws.write(idx, 4, _smsganda_cell_text(seg3), text_style)
+        ws.write(idx, 5, _smsganda_cell_text(seg4), text_style)
+        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, seg3, seg4)])
+        ws.row(idx).height_mismatch = True
+        ws.row(idx).height = min(9000, max(360, max_lines * 300))
 
     widths = [16, 18, 34, 44, 44, 28]
     for col, width in enumerate(widths):

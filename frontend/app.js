@@ -232,7 +232,47 @@ function normalizeCombo(combo){
   }
   return parseNumsInput(String(combo));
 }
-function normalizeCombos(combos){ return (combos || []).map(normalizeCombo).filter(c=>c.length); }
+function normalizeCombos(combos){
+  // RC7-10: 서버/저장소/엑셀 복원값이 문자열(JSON, 줄글, 쉼표 나열)이어도
+  // 반드시 6개 번호 단위의 조합 배열로 정규화한다.
+  if(!combos) return [];
+  if(typeof combos === 'string'){
+    const raw = normalizeText(combos).trim();
+    if(!raw) return [];
+    try{
+      const parsed = JSON.parse(raw);
+      if(parsed !== raw) return normalizeCombos(parsed);
+    }catch(e){}
+    const lines = raw.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    if(lines.length > 1){
+      const byLine = lines.map(line=>{
+        const cleaned = line.replace(/^\s*\d+\s*[\.\)조합:-]*\s*/, '');
+        return parseNumsInput(cleaned).slice(0, 6);
+      }).filter(c=>c.length >= 6);
+      if(byLine.length) return byLine;
+    }
+    const nums = parseNumsInput(raw);
+    const grouped = [];
+    for(let i=0; i<nums.length; i+=6){
+      const chunk = nums.slice(i, i+6);
+      if(chunk.length === 6) grouped.push(chunk);
+    }
+    return grouped;
+  }
+  if(Array.isArray(combos)){
+    if(combos.every(v=>typeof v === 'number' || /^\d+$/.test(String(v||'').trim()))){
+      const nums = combos.map(Number).filter(n=>Number.isFinite(n));
+      if(nums.length > 6){
+        const grouped=[];
+        for(let i=0;i<nums.length;i+=6){ const chunk=nums.slice(i,i+6); if(chunk.length===6) grouped.push(chunk); }
+        return grouped;
+      }
+    }
+    return combos.map(normalizeCombo).filter(c=>c.length);
+  }
+  if(typeof combos === 'object') return normalizeCombos(combos.numbers || combos.combos || combos.sets || combos.value || []);
+  return [];
+}
 function getDefaultTemplate(){
   return '안녕하세요 {회원명}님, BBLOTTO입니다.\n\n{회차}회차 추천번호 안내드립니다.\n\n[추천번호]\n{추천번호}\n\n[AI 분석 요약]\n{분석}\n\nAI SCORE: {AI점수}\n최근 데이터와 조합 균형을 기준으로 선별했습니다.\n좋은 결과 있으시길 바랍니다.\n\n발송일: {발송일}';
 }
@@ -242,7 +282,15 @@ function getBestAiScore(){
   return Math.max(...scores).toFixed(1);
 }
 function formatComboLines(combos){
-  return normalizeCombos(combos).map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n') || '추천번호 없음';
+  const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n)));
+  return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n') || '추천번호 없음';
+}
+function normalizeSmsLineBreaks(text){
+  return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
+}
+function toSmsGandaCellBreaks(text){
+  // RC7-11: 문자간다 구형 XLS 업로드 호환용. 내부 줄바꿈을 CRLF로 전달한다.
+  return normalizeSmsLineBreaks(text || '').replace(/\n/g,'\r\n');
 }
 function buildTemplateMessage(member, round, combos, analysis){
   const tplRaw = $('template')?.value || '';
@@ -251,13 +299,13 @@ function buildTemplateMessage(member, round, combos, analysis){
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
   const numbers = formatComboLines(combos || currentCombos);
-  return tpl
+  return normalizeSmsLineBreaks(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회차}', String(round || currentRound || '-'))
     .replaceAll('{추천번호}', numbers)
     .replaceAll('{분석}', analysisText)
     .replaceAll('{발송일}', today)
-    .replaceAll('{AI점수}', String(getBestAiScore()));
+    .replaceAll('{AI점수}', String(getBestAiScore())));
 }
 function scrollToMessagePanel(){
   const target = $('memberMessagePanel') || $('smsPreview') || $('comboList');
@@ -1131,12 +1179,21 @@ window.downloadApi=function(path){ const t=token(); location.href=path+(path.inc
 window.revokeSession=async function(tail){ if(!confirm('이 세션을 강제 종료할까요?')) return; await api('/api/sessions/'+tail,{method:'DELETE'}); toast('세션을 종료했습니다.'); await loadAdmin(); };
 window.cleanupSessions=function(){ alert('세션 정리는 관리자 설정에서 처리됩니다.'); };
 
+function autoGrowTextarea(el){
+  if(!el) return;
+  try{
+    el.style.height = 'auto';
+    el.style.height = Math.max(180, Math.min(el.scrollHeight + 8, 720)) + 'px';
+  }catch(e){}
+}
+
 function refreshSmsPreview(){
   if(!$('smsPreview')) return;
   const member=getSelectedMember();
   const txt = buildTemplateMessage(member, currentRound, currentCombos, currentAnalysis);
   currentSms = txt;
   $('smsPreview').value = txt;
+  autoGrowTextarea($('smsPreview'));
 }
 
 async function generate(){
@@ -1288,13 +1345,20 @@ function buildSmsExportRows(scope='all'){
   const analysis = normalizeText(currentAnalysis || '').trim();
   const round = currentRound || '';
   return members.map(m=>{
-    const message = buildBulkSmsMessage(m, round, combos, analysis);
+    const memberCombos = (typeof rc71MemberCombos === 'function') ? rc71MemberCombos(m, 0, combos.length || 10) : combos;
+    const memberAnalysis = (typeof rc71MemberAnalysis === 'function') ? rc71MemberAnalysis(m, memberCombos, 0) : analysis;
+    const message = buildBulkSmsMessage(m, round, memberCombos, memberAnalysis);
+    const seg = (typeof buildSmsSegmentsForMember === 'function') ? buildSmsSegmentsForMember(m, round, memberCombos, memberAnalysis) : {seg1:'',seg2:'',seg3:'',seg4:''};
     return {
       name: m.name || '',
       phone: String(m.phone || '').replace(/[^0-9]/g, ''),
-      message,
+      message: normalizeSmsLineBreaks(message),
       round,
-      numbers: formatComboLines(combos),
+      numbers: formatComboLines(memberCombos),
+      seg1: normalizeSmsLineBreaks(seg.seg1 || ''),
+      seg2: normalizeSmsLineBreaks(seg.seg2 || ''),
+      seg3: normalizeSmsLineBreaks(seg.seg3 || ''),
+      seg4: normalizeSmsLineBreaks(seg.seg4 || ''),
       grade: m.grade || '',
       status: m.status || '활성'
     };
@@ -1364,7 +1428,7 @@ function refreshSmsSegmentPreview(){
   const combos = (typeof rc71MemberCombos === 'function') ? rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10) : normalizeCombos(currentCombos);
   const analysis = (typeof rc71MemberAnalysis === 'function') ? rc71MemberAnalysis(m, combos, 0) : (currentAnalysis || '분석 내용이 여기에 표시됩니다.');
   const txt = buildSmsSegmentFullMessage(m, currentRound || '', combos, analysis);
-  if($('smsSegmentPreview')) $('smsSegmentPreview').value = txt;
+  if($('smsSegmentPreview')){ $('smsSegmentPreview').value = txt; autoGrowTextarea($('smsSegmentPreview')); }
   return txt;
 }
 window.bbSaveSmsSegments = ()=>saveSmsSegments(true);
@@ -1380,7 +1444,7 @@ function applyTemplate(template, member, round, combos, analysis){
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
   const numbers = formatComboLines(combos || currentCombos);
-  return tpl
+  return normalizeSmsLineBreaks(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회원이름}', name)
     .replaceAll('{이름}', name)
@@ -1389,7 +1453,7 @@ function applyTemplate(template, member, round, combos, analysis){
     .replaceAll('{번호}', numbers)
     .replaceAll('{분석}', analysisText)
     .replaceAll('{발송일}', today)
-    .replaceAll('{AI점수}', String(getBestAiScore()));
+    .replaceAll('{AI점수}', String(getBestAiScore())));
 }
 
 function buildBulkSmsMessage(member, round, combos, analysis){
@@ -1435,10 +1499,10 @@ async function downloadSmsGandaXls(scope='all'){
   const rows = buildSmsExportRows(scope).map(r=>({
     name: String(r.name || '회원').trim(),
     phone: String(r.phone || '').replace(/[^0-9]/g, ''),
-    seg1: r.seg1 || '',
-    seg2: r.seg2 || '',
-    seg3: r.seg3 || '',
-    seg4: r.seg4 || ''
+    seg1: toSmsGandaCellBreaks(r.seg1 || ''),
+    seg2: toSmsGandaCellBreaks(r.seg2 || ''),
+    seg3: toSmsGandaCellBreaks(r.seg3 || ''),
+    seg4: toSmsGandaCellBreaks(r.seg4 || '')
   })).filter(r=>r.name && r.phone);
   if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
   setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 중입니다...`);
@@ -1980,15 +2044,15 @@ function buildSmsExportRows(scope='all'){
     return {
       name: m.name || '',
       phone: String(m.phone || '').replace(/[^0-9]/g, ''),
-      message,
+      message: normalizeSmsLineBreaks(message),
       round,
       numbers: formatComboLines(memberCombos),
       grade: m.grade || '',
       status: m.status || '활성',
-      seg1: segs.seg1 || '',
-      seg2: segs.seg2 || '',
-      seg3: segs.seg3 || '',
-      seg4: segs.seg4 || ''
+      seg1: normalizeSmsLineBreaks(segs.seg1 || ''),
+      seg2: normalizeSmsLineBreaks(segs.seg2 || ''),
+      seg3: normalizeSmsLineBreaks(segs.seg3 || ''),
+      seg4: normalizeSmsLineBreaks(segs.seg4 || '')
     };
   });
 }
@@ -1997,8 +2061,8 @@ function applyBulkTemplateToPreview(){
   const combos = rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10);
   const analysis = rc71MemberAnalysis(m, combos, 0);
   const txt = (typeof buildSmsSegmentFullMessage === 'function') ? buildSmsSegmentFullMessage(m, currentRound || '', combos, analysis) : buildBulkSmsMessage(m, currentRound || '', combos, analysis);
-  if($('smsPreview')) $('smsPreview').value = txt;
-  if($('smsSegmentPreview')) $('smsSegmentPreview').value = txt;
+  if($('smsPreview')){ $('smsPreview').value = txt; autoGrowTextarea($('smsPreview')); }
+  if($('smsSegmentPreview')){ $('smsSegmentPreview').value = txt; autoGrowTextarea($('smsSegmentPreview')); }
   setText('smsExportInfo', '회원별 추천번호와 분석요약을 다르게 적용했습니다. CSV 생성 시 각 회원별로 자동 치환됩니다.');
   toast('회원별 문구 미리보기를 적용했습니다.');
 }
