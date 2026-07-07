@@ -6675,49 +6675,6 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
         headers={'Content-Disposition': f"attachment; filename={ascii_filename}; filename*=UTF-8''{quoted}"}
     )
 
-
-
-# ===================== RC7-5 SMSGANDA TXT CP949 EXPORT =====================
-@app.post('/api/export/smsganda_txt')
-def export_smsganda_txt(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
-    require_admin(authorization)
-    cleaned=[]
-    seen=set()
-    for row in (req.rows or []):
-        name = str(row.name or '').strip()
-        phone = _smsganda_clean_phone(row.phone)
-        if not name or not phone:
-            continue
-        key=(name, phone)
-        if key in seen:
-            continue
-        seen.add(key)
-        # 문자간다 텍스트 업로드용: 이름,전화번호 한 줄씩
-        cleaned.append(f'{name},{phone}')
-    if not cleaned:
-        raise HTTPException(status_code=400, detail='TXT로 만들 회원 이름/전화번호가 없습니다.')
-
-    # 문자간다 구형 업로드 화면 호환을 위해 CP949(ANSI) + CRLF로 저장합니다.
-    text = '\r\n'.join(cleaned) + '\r\n'
-    data = text.encode('cp949', errors='replace')
-    bio = io.BytesIO(data)
-    scope_label = {'all':'전체회원','representative':'대표관리자회원','general':'일반관리자회원','selected':'선택회원'}.get(str(req.scope or 'all'), '회원')
-    round_part = f'{req.round_no}회차_' if req.round_no else ''
-    filename = _safe_download_name(f'BBLOTTO_{round_part}문자간다_주소록_{scope_label}.txt')
-    ascii_filename = 'bblotto_smsganda_address.txt'
-    quoted = urllib.parse.quote(filename)
-    return StreamingResponse(
-        bio,
-        media_type='text/plain; charset=cp949',
-        headers={'Content-Disposition': f"attachment; filename={ascii_filename}; filename*=UTF-8''{quoted}"}
-    )
-
-@app.get('/api/rc7-5/status')
-def rc7_5_status(authorization: str|None = Header(default=None)):
-    admin=require_admin(authorization)
-    return {'ok': True, 'version': 'RC7-5 SMSGANDA TXT CP949', 'engine': DB_ENGINE, 'summary': '문자간다 TXT ANSI/CP949 주소록 생성 기본 지원', 'admin': admin.get('username')}
-# ===================== /RC7-5 SMSGANDA TXT CP949 EXPORT =====================
-
 @app.get('/api/rc7-4/status')
 def rc7_4_status(authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)

@@ -1402,45 +1402,14 @@ async function downloadSmsGandaXls(scope='all'){
   setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 완료 · 샘플과 같은 Excel 97-2003 형식`);
   toast(`문자간다 실제 XLS ${rows.length}명 생성 완료`);
 }
-async function downloadSmsGandaTxt(scope='all'){
+function downloadSmsGandaTxt(scope='all'){
   const members = smsExportMembers(scope);
   if(!members.length){ alert(scope === 'selected' ? '선택된 회원이 없거나 연락처가 없습니다.' : '문자간다 업로드용 회원 연락처가 없습니다.'); return; }
-  const rows = members.map(m=>({
-    name: String(m.name || m.member_name || '회원').trim(),
-    phone: String(m.phone || '').replace(/[^0-9]/g, '')
-  })).filter(r=>r.name && r.phone);
-  if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
-  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 TXT 생성 중입니다...`);
-  const r = await fetch('/api/export/smsganda_txt', {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify({rows, scope, round_no: currentRound || ''})
-  });
-  if(r.status === 401){ localStorage.removeItem('bb_v34_token'); location.href='/'; return; }
-  if(!r.ok){
-    let msg = '문자간다 TXT 생성 실패';
-    try{
-      const j = await r.json();
-      msg = j.detail || j.message || j.error?.message || j.error?.type || msg;
-      if(typeof msg !== 'string') msg = JSON.stringify(msg);
-    }catch(e){
-      try{ msg = await r.text(); }catch(_){}
-    }
-    throw new Error(msg);
-  }
-  const blob = await r.blob();
+  const lines = members.map(m=>`${String(m.name || m.member_name || '회원').trim()}\t${String(m.phone || '').replace(/[^0-9]/g, '')}`).filter(x=>x.trim());
   const roundPart = currentRound ? `${currentRound}회차_` : '';
-  const filename = `BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.txt`;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url), 1000);
-  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 TXT 생성 완료 · ANSI/CP949, 이름,전화번호 형식`);
-  toast(`문자간다 TXT ${rows.length}명 생성 완료`);
+  downloadTextFile(`BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.txt`, lines.join('\n'), 'text/plain;charset=utf-8;');
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${lines.length}명 문자간다 TXT 생성 완료 · A열 이름/B열 전화번호 형태`);
+  toast(`문자간다 TXT ${lines.length}명 생성 완료`);
 }
 function copySmsGandaMessage(){
   try{
@@ -1450,14 +1419,14 @@ function copySmsGandaMessage(){
     const text = buildBulkSmsMessage(m, currentRound || '', combos, analysis);
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); }
     else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-    setText('smsExportInfo', '문자간다 메시지 입력창에 붙여넣을 문자내용을 복사했습니다. TXT는 주소록 업로드용입니다.');
+    setText('smsExportInfo', '문자간다 메시지 입력창에 붙여넣을 문자내용을 복사했습니다. XLS는 주소록 업로드용입니다.');
     toast('문자내용 복사 완료');
   }catch(e){ console.error(e); alert('문자내용 복사 중 오류: '+(e.message||e)); }
 }
 async function bbDownloadSmsGandaXls(){ try{ await downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
 async function bbDownloadSmsGandaXlsAll(){ try{ await downloadSmsGandaXls('all'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
 async function bbDownloadSmsGandaXlsSelected(){ try{ await downloadSmsGandaXls('selected'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
-async function bbDownloadSmsGandaTxt(){ try{ await downloadSmsGandaTxt(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 TXT 생성 중 오류: '+(e.message||e)); } }
+function bbDownloadSmsGandaTxt(){ try{ downloadSmsGandaTxt(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 TXT 생성 중 오류: '+(e.message||e)); } }
 window.bbDownloadSmsGandaXls = bbDownloadSmsGandaXls;
 window.bbDownloadSmsGandaXlsAll = bbDownloadSmsGandaXlsAll;
 window.bbDownloadSmsGandaXlsSelected = bbDownloadSmsGandaXlsSelected;
