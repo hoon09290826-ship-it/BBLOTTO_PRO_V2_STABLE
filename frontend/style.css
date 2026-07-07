@@ -210,3 +210,17 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 /* RC6-2 문자간다 CSV 문구 수정 영역 */
 .sms-export-panel textarea{width:100%;min-height:120px;margin:8px 0 10px;resize:vertical;background:#050505;color:#fff;border:1px solid rgba(212,175,55,.45);border-radius:12px;padding:12px;box-sizing:border-box;line-height:1.45}
 .sms-export-panel label{display:block;margin-top:10px;color:#f6d878;font-weight:800;font-size:13px}
+
+
+/* RC7-8 문자간다 발송센터 */
+.rc78-sms-center{border:1px solid rgba(212,175,55,.35);border-radius:14px;padding:16px;background:rgba(20,18,10,.6);}
+.sms-segment-grid{display:grid;grid-template-columns:minmax(320px,1.1fr) minmax(260px,.9fr);gap:14px;align-items:stretch;}
+.sms-segments label{margin-top:10px;display:block;color:#f5d76e;font-weight:800;}
+.sms-segment-box{width:100%;min-height:72px;resize:vertical;white-space:pre-wrap;}
+.sms-segment-box.small{min-height:46px;}
+.sms-live-preview{border:1px solid rgba(212,175,55,.25);border-radius:12px;padding:12px;background:rgba(0,0,0,.22);}
+.sms-live-preview h4{margin:0 0 8px;color:#f5d76e;}
+#smsSegmentPreview{width:100%;min-height:360px;resize:vertical;white-space:pre-wrap;}
+.btnrow.mini{gap:6px;margin:6px 0 8px;}
+.btnrow.mini button{padding:7px 10px;font-size:12px;}
+@media(max-width:900px){.sms-segment-grid{grid-template-columns:1fr;}#smsSegmentPreview{min-height:240px;}}

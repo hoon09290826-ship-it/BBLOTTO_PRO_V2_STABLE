@@ -6612,6 +6612,10 @@ def rc7_1_status(authorization: str|None = Header(default=None)):
 class SmsGandaRow(BaseModel):
     name: str = ''
     phone: str = ''
+    seg1: str = ''
+    seg2: str = ''
+    seg3: str = ''
+    seg4: str = ''
 
 class SmsGandaXlsReq(BaseModel):
     rows: list[SmsGandaRow] = []
@@ -6643,7 +6647,14 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
         if key in seen:
             continue
         seen.add(key)
-        cleaned.append((name, phone))
+        cleaned.append((
+            name,
+            phone,
+            str(getattr(row, 'seg1', '') or ''),
+            str(getattr(row, 'seg2', '') or ''),
+            str(getattr(row, 'seg3', '') or ''),
+            str(getattr(row, 'seg4', '') or '')
+        ))
     if not cleaned:
         raise HTTPException(status_code=400, detail='엑셀로 만들 회원 이름/전화번호가 없습니다.')
 
@@ -6666,13 +6677,15 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     for col, header in enumerate(headers):
         ws.write(0, col, header, header_style)
 
-    for idx, (name, phone) in enumerate(cleaned, start=1):
+    for idx, (name, phone, seg1, seg2, seg3, seg4) in enumerate(cleaned, start=1):
         ws.write(idx, 0, name, text_style)
         ws.write(idx, 1, phone, text_style)
-        for col in range(2, 6):
-            ws.write(idx, col, '', text_style)
+        ws.write(idx, 2, seg1, text_style)
+        ws.write(idx, 3, seg2, text_style)
+        ws.write(idx, 4, seg3, text_style)
+        ws.write(idx, 5, seg4, text_style)
 
-    widths = [16, 18, 12, 12, 12, 12]
+    widths = [16, 18, 34, 44, 44, 28]
     for col, width in enumerate(widths):
         ws.col(col).width = width * 256
 
@@ -6739,6 +6752,11 @@ def rc7_5_status(authorization: str|None = Header(default=None)):
 def rc7_6_status(authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     return {'ok': True, 'version': 'RC7-6 SMSGANDA TEMPLATE XLS', 'engine': DB_ENGINE, 'summary': '문자간다 샘플 XLS 헤더 형식(이름/휴대전화/[*1*]~[*4*]) 적용', 'admin': admin.get('username')}
+
+@app.get('/api/rc7-8/status')
+def rc7_8_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC7-8 SMSGANDA SEND CENTER', 'engine': DB_ENGINE, 'summary': '문자간다 [*1*]~[*4*] 문구 분리/수정/미리보기/XLS 연동 적용', 'admin': admin.get('username')}
 # ===================== /RC7-5 SMSGANDA TXT CP949 EXPORT =====================
 
 @app.get('/api/rc7-4/status')

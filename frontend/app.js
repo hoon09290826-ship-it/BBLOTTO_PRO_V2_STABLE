@@ -1306,6 +1306,73 @@ function getBulkSmsTemplate(){
   return custom || normalizeText($('template')?.value || '').trim() || normalizeText(currentSms || '').trim();
 }
 
+
+// ===================== RC7-8 SMSGANDA SEGMENT CENTER =====================
+const BB_SMS_SEG_DEFAULTS = {
+  1: '안녕하세요 {회원명}님, BBLOTTO입니다.\n\n{회차}회차 추천번호 및 이번회차 분석입니다.',
+  2: '[이번회차 핵심 분석]\n\n{분석}',
+  3: '[추천번호]\n\n{추천번호}',
+  4: '좋은 결과 있으시길 바랍니다.'
+};
+function getSmsSegment(n){
+  const el = $('smsSeg'+n);
+  const saved = localStorage.getItem('bb_sms_seg_'+n);
+  return normalizeText(el?.value || saved || BB_SMS_SEG_DEFAULTS[n] || '');
+}
+function setSmsSegment(n, value){
+  const v = normalizeText(value || '');
+  const el = $('smsSeg'+n);
+  if(el) el.value = v;
+  localStorage.setItem('bb_sms_seg_'+n, v);
+}
+function initSmsSegments(){
+  [1,2,3,4].forEach(n=>{
+    const v = localStorage.getItem('bb_sms_seg_'+n) || BB_SMS_SEG_DEFAULTS[n];
+    if($('smsSeg'+n)) $('smsSeg'+n).value = v;
+    $('smsSeg'+n)?.addEventListener('input',()=>{ saveSmsSegments(false); refreshSmsSegmentPreview(); });
+  });
+  refreshSmsSegmentPreview();
+}
+function saveSmsSegments(show=true){
+  [1,2,3,4].forEach(n=>{ if($('smsSeg'+n)) localStorage.setItem('bb_sms_seg_'+n, normalizeText($('smsSeg'+n).value || '')); });
+  if(show){ setText('smsExportInfo','문자간다 [*1*]~[*4*] 문구를 저장했습니다.'); toast('문자간다 문구 저장 완료'); }
+}
+function resetSmsSegment(n){
+  setSmsSegment(n, BB_SMS_SEG_DEFAULTS[n]);
+  refreshSmsSegmentPreview();
+  setText('smsExportInfo', `[*${n}*] 문구를 기본값으로 복원했습니다.`);
+}
+function resetAllSmsSegments(){
+  [1,2,3,4].forEach(n=>setSmsSegment(n, BB_SMS_SEG_DEFAULTS[n]));
+  refreshSmsSegmentPreview();
+  setText('smsExportInfo','문자간다 문구 전체를 기본값으로 복원했습니다.');
+}
+function buildSmsSegmentsForMember(member, round, combos, analysis){
+  return {
+    seg1: applyTemplate(getSmsSegment(1), member, round, combos, analysis),
+    seg2: applyTemplate(getSmsSegment(2), member, round, combos, analysis),
+    seg3: applyTemplate(getSmsSegment(3), member, round, combos, analysis),
+    seg4: applyTemplate(getSmsSegment(4), member, round, combos, analysis)
+  };
+}
+function buildSmsSegmentFullMessage(member, round, combos, analysis){
+  const seg = buildSmsSegmentsForMember(member, round, combos, analysis);
+  return [seg.seg1, seg.seg2, seg.seg3, seg.seg4].map(v=>normalizeText(v).trim()).filter(Boolean).join('\n\n');
+}
+function refreshSmsSegmentPreview(){
+  const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
+  const combos = (typeof rc71MemberCombos === 'function') ? rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10) : normalizeCombos(currentCombos);
+  const analysis = (typeof rc71MemberAnalysis === 'function') ? rc71MemberAnalysis(m, combos, 0) : (currentAnalysis || '분석 내용이 여기에 표시됩니다.');
+  const txt = buildSmsSegmentFullMessage(m, currentRound || '', combos, analysis);
+  if($('smsSegmentPreview')) $('smsSegmentPreview').value = txt;
+  return txt;
+}
+window.bbSaveSmsSegments = ()=>saveSmsSegments(true);
+window.bbResetSmsSegment = resetSmsSegment;
+window.bbResetAllSmsSegments = resetAllSmsSegments;
+window.bbRefreshSmsSegmentPreview = refreshSmsSegmentPreview;
+// ===================== /RC7-8 SMSGANDA SEGMENT CENTER =====================
+
 // RC6-5: 독립 템플릿 치환 함수. bulkSmsTemplate 사용 시 필수입니다.
 function applyTemplate(template, member, round, combos, analysis){
   const tpl = normalizeText(template || '').trim() || getDefaultTemplate();
@@ -1365,9 +1432,13 @@ function escapeHtml(value){
 async function downloadSmsGandaXls(scope='all'){
   const members = smsExportMembers(scope);
   if(!members.length){ alert(scope === 'selected' ? '선택된 회원이 없거나 연락처가 없습니다.' : '문자간다 업로드용 회원 연락처가 없습니다.'); return; }
-  const rows = members.map(m=>({
-    name: String(m.name || m.member_name || '회원').trim(),
-    phone: String(m.phone || '').replace(/[^0-9]/g, '')
+  const rows = buildSmsExportRows(scope).map(r=>({
+    name: String(r.name || '회원').trim(),
+    phone: String(r.phone || '').replace(/[^0-9]/g, ''),
+    seg1: r.seg1 || '',
+    seg2: r.seg2 || '',
+    seg3: r.seg3 || '',
+    seg4: r.seg4 || ''
   })).filter(r=>r.name && r.phone);
   if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
   setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 중입니다...`);
@@ -1447,7 +1518,7 @@ function copySmsGandaMessage(){
     const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
     const combos = (typeof rc71MemberCombos === 'function') ? rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10) : normalizeCombos(currentCombos);
     const analysis = (typeof rc71MemberAnalysis === 'function') ? rc71MemberAnalysis(m, combos, 0) : (currentAnalysis || '');
-    const text = buildBulkSmsMessage(m, currentRound || '', combos, analysis);
+    const text = (typeof buildSmsSegmentFullMessage === 'function') ? buildSmsSegmentFullMessage(m, currentRound || '', combos, analysis) : buildBulkSmsMessage(m, currentRound || '', combos, analysis);
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); }
     else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
     setText('smsExportInfo', '문자간다 메시지 입력창에 붙여넣을 문자내용을 복사했습니다. TXT는 주소록 업로드용입니다.');
@@ -1712,7 +1783,8 @@ function bind(){
   $('copySmsBulk')?.addEventListener('click',copyBulkSmsText);
   $('applyBulkTemplate')?.addEventListener('click',applyBulkTemplateToPreview);
   $('bulkSmsTemplate')?.addEventListener('input',()=>{ saveWorkspaceState(); setText('smsExportInfo','수정한 문구가 CSV/복사에 적용됩니다.'); });
-  $('smsCsvScope')?.addEventListener('change',()=>{ refreshSmsScopeInfo(); setText('smsExportInfo', getSmsScopeLabel(getSmsScopeValue()) + ' 기준으로 CSV가 생성됩니다.'); });
+  if(typeof initSmsSegments === 'function') initSmsSegments();
+  $('smsCsvScope')?.addEventListener('change',()=>{ refreshSmsScopeInfo(); if(typeof refreshSmsSegmentPreview === 'function') refreshSmsSegmentPreview(); setText('smsExportInfo', getSmsScopeLabel(getSmsScopeValue()) + ' 기준으로 파일이 생성됩니다.'); });
   if(!window.__bbSmsExportDelegatedClickBound){
     window.__bbSmsExportDelegatedClickBound=true;
     document.addEventListener('click', function(e){
@@ -1903,7 +1975,8 @@ function buildSmsExportRows(scope='all'){
   return members.map((m, idx)=>{
     const memberCombos = rc71MemberCombos(m, idx, baseCount);
     const memberAnalysis = rc71MemberAnalysis(m, memberCombos, idx);
-    const message = buildBulkSmsMessage(m, round, memberCombos, memberAnalysis);
+    const segs = (typeof buildSmsSegmentsForMember === 'function') ? buildSmsSegmentsForMember(m, round, memberCombos, memberAnalysis) : {};
+    const message = (typeof buildSmsSegmentFullMessage === 'function') ? buildSmsSegmentFullMessage(m, round, memberCombos, memberAnalysis) : buildBulkSmsMessage(m, round, memberCombos, memberAnalysis);
     return {
       name: m.name || '',
       phone: String(m.phone || '').replace(/[^0-9]/g, ''),
@@ -1911,7 +1984,11 @@ function buildSmsExportRows(scope='all'){
       round,
       numbers: formatComboLines(memberCombos),
       grade: m.grade || '',
-      status: m.status || '활성'
+      status: m.status || '활성',
+      seg1: segs.seg1 || '',
+      seg2: segs.seg2 || '',
+      seg3: segs.seg3 || '',
+      seg4: segs.seg4 || ''
     };
   });
 }
@@ -1919,8 +1996,9 @@ function applyBulkTemplateToPreview(){
   const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
   const combos = rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10);
   const analysis = rc71MemberAnalysis(m, combos, 0);
-  const txt = buildBulkSmsMessage(m, currentRound || '', combos, analysis);
+  const txt = (typeof buildSmsSegmentFullMessage === 'function') ? buildSmsSegmentFullMessage(m, currentRound || '', combos, analysis) : buildBulkSmsMessage(m, currentRound || '', combos, analysis);
   if($('smsPreview')) $('smsPreview').value = txt;
+  if($('smsSegmentPreview')) $('smsSegmentPreview').value = txt;
   setText('smsExportInfo', '회원별 추천번호와 분석요약을 다르게 적용했습니다. CSV 생성 시 각 회원별로 자동 치환됩니다.');
   toast('회원별 문구 미리보기를 적용했습니다.');
 }
