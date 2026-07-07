@@ -586,7 +586,7 @@ function renderMembers(list){
         <small class="member-owner-line">등록 관리자: <strong>${esc(registeredBy)}</strong>${m.created_at ? ' · 등록일 ' + esc(m.created_at) : ''}</small>
         <small>${esc(m.memo||'')}</small>
       </div>
-      <div class="member-actions"><span class="combo-count-badge">${esc(getMemberPreferredCount(m))}조합</span><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
+      <div class="member-actions"><button class="combo-count-badge combo-generate-copy" onclick="generateMemberAndCopy(${m.id}, this)" title="이 회원 조합수로 추천번호 생성 후 문자 자동 복사">${esc(getMemberPreferredCount(m))}조합</button><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
     </div>`;
   }).join('');
   renderPagination('memberPager', source.length, memberPage, memberPageSize, 'setMemberPage', 'setMemberPageSize');
@@ -1143,6 +1143,46 @@ window.selectMember=function(id){
   refreshSmsPreview();
   toast(`${m.name} 회원을 선택했습니다.`);
 };
+
+async function copyTextToClipboard(text){
+  const value = String(text || '');
+  if(!value.trim()) throw new Error('복사할 문자 내용이 없습니다.');
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const ta=document.createElement('textarea');
+  ta.value=value;
+  ta.setAttribute('readonly','');
+  ta.style.position='fixed';
+  ta.style.left='-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
+}
+
+window.generateMemberAndCopy = safe(async function(id, btn){
+  const m=membersCache.find(x=>String(x.id)===String(id));
+  if(!m){ alert('회원을 찾을 수 없습니다.'); return; }
+  const oldText = btn?.textContent;
+  try{
+    if(btn){ btn.disabled=true; btn.textContent='생성중'; }
+    window.selectMember(id);
+    setGenCountValue(getMemberPreferredCount(m));
+    await generate();
+    const text = ($('smsPreview')?.value || currentSms || '').trim();
+    await copyTextToClipboard(text);
+    toast(`${m.name} ${getMemberPreferredCount(m)}조합 생성 후 문자내용 복사 완료`);
+    if(btn) btn.textContent='복사완료';
+    setTimeout(()=>{ if(btn){ btn.textContent=oldText || `${getMemberPreferredCount(m)}조합`; btn.disabled=false; } }, 1200);
+  }catch(e){
+    console.error(e);
+    if(btn){ btn.textContent=oldText || `${getMemberPreferredCount(m)}조합`; btn.disabled=false; }
+    alert('자동 생성/복사 실패: '+(e.message||e));
+  }
+});
 window.detailMember=safe(async function(id){
   let d; try{ d=await api('/api/members/'+id+'/detail'); }catch(e){ d=await api('/api/members/'+id); }
   const m=d.member || d;
