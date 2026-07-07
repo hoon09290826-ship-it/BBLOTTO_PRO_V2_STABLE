@@ -6635,15 +6635,14 @@ def _smsganda_cell_text(value):
     return text.replace('\n', '\r\n')
 
 def _smsganda_space_text(value):
-    # RC7-14: [*3*] 추천번호 전용. 문자간다 미리보기 폭이 좁아 10번 조합이 줄바꿈되는 문제를 막기 위해
-    # 번호 사이 공백은 줄이고, 조합 사이 여백만 넉넉하게 유지한다.
+    # RC7-15: [*3*] 추천번호 전용. 모바일 SMS에서 줄이 깨지지 않도록
+    # 1)3,18,21,30,41,42 형식의 짧은 라인을 그대로 CRLF로 저장한다.
     text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
-    text = re.sub(r'\s*,\s*', ',', text)                 # 12, 17 -> 12,17
-    text = re.sub(r'(?m)^\s*(\d{1,2})\.\s*', r'\1. ', text)  # 앞 들여쓰기 제거
-    text = re.sub(r'\n+', '              ', text)
-    text = re.sub(r'(?<=\])(?=\d+\.)', '                            ', text)
-    text = re.sub(r'(?<=[0-9])(?=\d{1,2}\.\s)', '              ', text)
-    return text.strip()
+    text = re.sub(r'\s*,\s*', ',', text)
+    text = re.sub(r'(?m)^\s*(\d{1,2})\.\s*', r'\1)', text)
+    text = re.sub(r'(?m)^\s*(\d{1,2})\)\s*', r'\1)', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip().replace('\n', '\r\n')
 
 @app.post('/api/export/smsganda_xls')
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
@@ -6705,7 +6704,7 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
         ws.write(idx, 3, _smsganda_cell_text(seg2), text_style)
         ws.write(idx, 4, _smsganda_space_text(seg3), text_style)
         ws.write(idx, 5, _smsganda_cell_text(seg4), text_style)
-        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, seg4)])
+        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, _smsganda_space_text(seg3), seg4)])
         ws.row(idx).height_mismatch = True
         ws.row(idx).height = min(9000, max(360, max_lines * 300))
 

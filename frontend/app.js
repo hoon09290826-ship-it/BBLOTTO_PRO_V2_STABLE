@@ -289,14 +289,15 @@ function formatComboNumbersCompact(combo){
   return (combo || []).slice(0,6).map(n=>String(Number(n))).join(',');
 }
 function formatSmsGandaSpaceCombos(combos){
-  // RC7-14: 문자간다 미리보기 폭에서 10번 조합이 꺾이지 않도록 숫자 사이 공백을 제거합니다.
+  // RC7-15: 모바일 SMS 폭에 맞춘 초단축 1줄 1조합 포맷.
+  // 공백 정렬을 쓰면 휴대폰에서 자동 줄바꿈이 이상하게 발생하므로,
+  // 번호 사이 공백을 모두 제거하고 실제 줄바꿈으로 조합을 분리합니다.
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
   if(!normalized.length) return '추천번호 없음';
-  const gap = '              '; // 조합 사이 안전 여백
-  return normalized.map((c,i)=>`${i+1}. ${formatComboNumbersCompact(c)}`).join(gap);
+  return normalized.map((c,i)=>`${i+1})${formatComboNumbersCompact(c)}`).join('\n');
 }
 function buildSmsGandaRecommendationSegment(combos){
-  return '[추천번호]' + '                            ' + formatSmsGandaSpaceCombos(combos);
+  return '[추천번호]\n' + formatSmsGandaSpaceCombos(combos);
 }
 function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
