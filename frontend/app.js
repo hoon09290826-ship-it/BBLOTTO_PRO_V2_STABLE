@@ -283,47 +283,31 @@ function getBestAiScore(){
 }
 function formatComboLines(combos){
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n)));
-  return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n') || '추천번호 없음';
-}
-function formatComboNumbersCompact(combo){
-  return (combo || []).slice(0,6).map(n=>String(Number(n))).join(',');
-}
-function formatSmsGandaSpaceCombos(combos){
-  // RC7-15: 모바일 SMS 폭에 맞춘 초단축 1줄 1조합 포맷.
-  // 공백 정렬을 쓰면 휴대폰에서 자동 줄바꿈이 이상하게 발생하므로,
-  // 번호 사이 공백을 모두 제거하고 실제 줄바꿈으로 조합을 분리합니다.
-  const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
   if(!normalized.length) return '추천번호 없음';
-  return normalized.map((c,i)=>`${i+1})${formatComboNumbersCompact(c)}`).join('\n');
+  return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n');
 }
-function formatSmsGandaLineCombos(combos, start=0, end=null){
-  // RC7-19: 문자간다 직접 붙여넣기에서 정상 확인된 1줄 1조합 형식.
-  // 엑셀 생성 단계에서 CRLF로 저장되므로 여기서는 일반 \n으로 조립합니다.
-  const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
-  const part = normalized.slice(start, end ?? normalized.length);
-  if(!part.length) return '추천번호 없음';
-  return part.map((c,i)=>`${start+i+1}. ${c.join(', ')}`).join('\n');
+function formatSmsGandaNumbers(combos){
+  // RC7-21: 문자간다 최종 수신 문자 기준, 한 줄에 한 조합만 나오도록 가장 단순한 점(.) 형식으로 고정
+  return formatComboLines(combos);
 }
-function buildSmsGandaRecommendationSegment(combos){
-  return '[추천번호]\n' + formatSmsGandaLineCombos(combos, 0, 10);
-}
-function buildSmsGandaRecommendationSegment2(combos){
-  return '좋은 결과 있으시길 바랍니다.';
-}
-function compactSmsGandaAnalysis(text){
-  return normalizeText(text || '')
-    .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    .split('\n').map(v=>v.trim()).filter(Boolean).join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+function normalizeSmsgandaPreviewText(text){
+  let t = normalizeSmsLineBreaks(text || '');
+  // 이전 RC 패치에서 저장된 슬래시(/) 구분 문구가 localStorage에 남아 있어도 자동 복구
+  t = t.replace(/\s*\/\s*(?=\d{1,2}[\.\)]\s*)/g, '\n');
+  // [추천번호] 바로 뒤에 번호가 붙으면 강제 줄바꿈
+  t = t.replace(/(\[추천번호\])\s*(?=\d{1,2}[\.\)]\s*)/g, '$1\n');
+  // 번호 앞에 줄바꿈이 없으면 보정
+  t = t.replace(/([^\n])\s+(?=\d{1,2}[\.\)]\s*\d)/g, '$1\n');
+  // 1) 형식은 1. 형식으로 통일
+  t = t.replace(/(^|\n)(\d{1,2})\)\s*/g, '$1$2. ');
+  return t.replace(/\n{3,}/g, '\n\n').trim();
 }
 function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
 }
 function toSmsGandaCellBreaks(text){
-  // RC7-20: 문자간다 엑셀 가져오기에서 셀 내부 CR/LF가 사라지는 문제 회피.
-  // 일반 줄바꿈 대신 유니코드 LINE SEPARATOR(U+2028)를 넣어 최종 문자에서 줄 구분을 유지합니다.
-  return normalizeSmsLineBreaks(text || '').replace(/\n/g, '\u2028');
+  // RC7-11: 문자간다 구형 XLS 업로드 호환용. 내부 줄바꿈을 CRLF로 전달한다.
+  return normalizeSmsLineBreaks(text || '').replace(/\n/g,'\r\n');
 }
 function buildTemplateMessage(member, round, combos, analysis){
   const tplRaw = $('template')?.value || '';
@@ -331,9 +315,8 @@ function buildTemplateMessage(member, round, combos, analysis){
   const name = member?.name || '회원';
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
-  const numbers = formatComboLines(combos || currentCombos);
-  const smsGandaNumbers = formatSmsGandaSpaceCombos(combos || currentCombos);
-  return normalizeSmsLineBreaks(tpl
+  const numbers = formatSmsGandaNumbers(combos || currentCombos);
+  return normalizeSmsgandaPreviewText(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회차}', String(round || currentRound || '-'))
     .replaceAll('{추천번호}', numbers)
@@ -1406,6 +1389,7 @@ function getBulkSmsTemplate(){
 
 
 // ===================== RC7-8 SMSGANDA SEGMENT CENTER =====================
+const BB_SMS_SEG_VERSION = 'RC7_21_FINAL_MMS_FORMAT';
 const BB_SMS_SEG_DEFAULTS = {
   1: '안녕하세요 {회원명}님, BBLOTTO입니다.\n{회차}회차 추천번호 및 이번회차 분석입니다.',
   2: '[이번회차 핵심 분석]\n{분석}',
@@ -1424,6 +1408,12 @@ function setSmsSegment(n, value){
   localStorage.setItem('bb_sms_seg_'+n, v);
 }
 function initSmsSegments(){
+  // RC7-21: 이전 RC7-14~20에서 저장된 슬래시/공백형 문구가 브라우저 localStorage에 남아 있으면
+  // 새 패치를 덮어써도 계속 깨져 보입니다. 버전이 다르면 1회 자동 초기화합니다.
+  if(localStorage.getItem('bb_sms_seg_version') !== BB_SMS_SEG_VERSION){
+    [1,2,3,4].forEach(n=>localStorage.setItem('bb_sms_seg_'+n, BB_SMS_SEG_DEFAULTS[n]));
+    localStorage.setItem('bb_sms_seg_version', BB_SMS_SEG_VERSION);
+  }
   [1,2,3,4].forEach(n=>{
     const v = localStorage.getItem('bb_sms_seg_'+n) || BB_SMS_SEG_DEFAULTS[n];
     if($('smsSeg'+n)) $('smsSeg'+n).value = v;
@@ -1442,20 +1432,16 @@ function resetSmsSegment(n){
 }
 function resetAllSmsSegments(){
   [1,2,3,4].forEach(n=>setSmsSegment(n, BB_SMS_SEG_DEFAULTS[n]));
+  localStorage.setItem('bb_sms_seg_version', BB_SMS_SEG_VERSION);
   refreshSmsSegmentPreview();
   setText('smsExportInfo','문자간다 문구 전체를 기본값으로 복원했습니다.');
 }
 function buildSmsSegmentsForMember(member, round, combos, analysis){
-  // RC7-19: [*3*] 추천번호를 직접 붙여넣기와 동일한 1줄 1조합 형식으로 생성합니다.
-  // 서버 XLSX 생성 단계에서 내부 줄바꿈을 CRLF로 저장합니다.
-  const name = member?.name || '회원';
-  const roundText = String(round || currentRound || '-');
-  const analysisOneLine = compactSmsGandaAnalysis(analysis || currentAnalysis || '최근 흐름과 누적 데이터를 함께 비교해 회원별 조합을 선별했습니다. 본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.');
   return {
-    seg1: `안녕하세요 ${name}님, BBLOTTO입니다. ${roundText}회차 추천번호 및 이번회차 분석입니다.`,
-    seg2: `[이번회차 핵심 분석] ${analysisOneLine}`,
-    seg3: buildSmsGandaRecommendationSegment(combos || currentCombos),
-    seg4: buildSmsGandaRecommendationSegment2(combos || currentCombos)
+    seg1: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(1), member, round, combos, analysis)),
+    seg2: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(2), member, round, combos, analysis)),
+    seg3: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(3), member, round, combos, analysis)),
+    seg4: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(4), member, round, combos, analysis))
   };
 }
 function buildSmsSegmentFullMessage(member, round, combos, analysis){
@@ -1482,14 +1468,12 @@ function applyTemplate(template, member, round, combos, analysis){
   const name = member?.name || member?.member_name || '회원';
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
-  const numbers = formatComboLines(combos || currentCombos);
-  const smsGandaNumbers = formatSmsGandaSpaceCombos(combos || currentCombos);
-  return normalizeSmsLineBreaks(tpl
+  const numbers = formatSmsGandaNumbers(combos || currentCombos);
+  return normalizeSmsgandaPreviewText(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회원이름}', name)
     .replaceAll('{이름}', name)
     .replaceAll('{회차}', String(round || currentRound || '-'))
-    .replaceAll('{추천번호_문자간다}', smsGandaNumbers)
     .replaceAll('{추천번호}', numbers)
     .replaceAll('{번호}', numbers)
     .replaceAll('{분석}', analysisText)
@@ -1546,7 +1530,7 @@ async function downloadSmsGandaXls(scope='all'){
     seg4: toSmsGandaCellBreaks(r.seg4 || '')
   })).filter(r=>r.name && r.phone);
   if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
-  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLSX 생성 중입니다...`);
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 중입니다...`);
   const r = await fetch('/api/export/smsganda_xls', {
     method: 'POST',
     headers: headers(),
@@ -1554,7 +1538,7 @@ async function downloadSmsGandaXls(scope='all'){
   });
   if(r.status === 401){ localStorage.removeItem('bb_v34_token'); location.href='/'; return; }
   if(!r.ok){
-    let msg = '문자간다 XLSX 생성 실패';
+    let msg = '문자간다 XLS 생성 실패';
     try{
       const j = await r.json();
       msg = j.detail || j.message || j.error?.message || j.error?.type || msg;
@@ -1566,7 +1550,7 @@ async function downloadSmsGandaXls(scope='all'){
   }
   const blob = await r.blob();
   const roundPart = currentRound ? `${currentRound}회차_` : '';
-  const filename = `BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.xlsx`;
+  const filename = `BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.xls`;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1575,8 +1559,8 @@ async function downloadSmsGandaXls(scope='all'){
   a.click();
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
-  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLSX 생성 완료 · 줄바꿈 보존 형식`);
-  toast(`문자간다 실제 XLSX ${rows.length}명 생성 완료`);
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 완료 · 샘플과 같은 Excel 97-2003 형식`);
+  toast(`문자간다 실제 XLS ${rows.length}명 생성 완료`);
 }
 async function downloadSmsGandaTxt(scope='all'){
   const members = smsExportMembers(scope);
@@ -1630,9 +1614,9 @@ function copySmsGandaMessage(){
     toast('문자내용 복사 완료');
   }catch(e){ console.error(e); alert('문자내용 복사 중 오류: '+(e.message||e)); }
 }
-async function bbDownloadSmsGandaXls(){ try{ await downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLSX 생성 중 오류: '+(e.message||e)); } }
-async function bbDownloadSmsGandaXlsAll(){ try{ await downloadSmsGandaXls('all'); }catch(e){ console.error(e); alert('문자간다 XLSX 생성 중 오류: '+(e.message||e)); } }
-async function bbDownloadSmsGandaXlsSelected(){ try{ await downloadSmsGandaXls('selected'); }catch(e){ console.error(e); alert('문자간다 XLSX 생성 중 오류: '+(e.message||e)); } }
+async function bbDownloadSmsGandaXls(){ try{ await downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+async function bbDownloadSmsGandaXlsAll(){ try{ await downloadSmsGandaXls('all'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+async function bbDownloadSmsGandaXlsSelected(){ try{ await downloadSmsGandaXls('selected'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
 async function bbDownloadSmsGandaTxt(){ try{ await downloadSmsGandaTxt(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 TXT 생성 중 오류: '+(e.message||e)); } }
 window.bbDownloadSmsGandaXls = bbDownloadSmsGandaXls;
 window.bbDownloadSmsGandaXlsAll = bbDownloadSmsGandaXlsAll;
