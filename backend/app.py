@@ -6647,16 +6647,34 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     if not cleaned:
         raise HTTPException(status_code=400, detail='엑셀로 만들 회원 이름/전화번호가 없습니다.')
 
-    # 문자간다 샘플 파일과 같은 Excel 97~2003 BIFF 계열(.xls)로 생성합니다.
+    # 문자간다 제공 샘플 형식 그대로 맞춥니다.
+    # 샘플 1행: 이름, 휴대전화, [*1*], [*2*], [*3*], [*4*]
+    # 실제 데이터는 2행부터 A열=이름, B열=휴대전화, C~F열은 공란으로 저장합니다.
     wb = xlwt.Workbook(encoding='cp949')
     ws = wb.add_sheet('Sheet1')
+
+    header_style = xlwt.XFStyle()
+    header_style.num_format_str = '@'
+    header_font = xlwt.Font()
+    header_font.bold = True
+    header_style.font = header_font
+
     text_style = xlwt.XFStyle()
     text_style.num_format_str = '@'
-    for idx, (name, phone) in enumerate(cleaned):
+
+    headers = ['이름', '휴대전화', '[*1*]', '[*2*]', '[*3*]', '[*4*]']
+    for col, header in enumerate(headers):
+        ws.write(0, col, header, header_style)
+
+    for idx, (name, phone) in enumerate(cleaned, start=1):
         ws.write(idx, 0, name, text_style)
         ws.write(idx, 1, phone, text_style)
-    ws.col(0).width = 18 * 256
-    ws.col(1).width = 18 * 256
+        for col in range(2, 6):
+            ws.write(idx, col, '', text_style)
+
+    widths = [16, 18, 12, 12, 12, 12]
+    for col, width in enumerate(widths):
+        ws.col(col).width = width * 256
 
     bio = io.BytesIO()
     wb.save(bio)
@@ -6674,6 +6692,54 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
         media_type='application/vnd.ms-excel',
         headers={'Content-Disposition': f"attachment; filename={ascii_filename}; filename*=UTF-8''{quoted}"}
     )
+
+
+
+# ===================== RC7-5 SMSGANDA TXT CP949 EXPORT =====================
+@app.post('/api/export/smsganda_txt')
+def export_smsganda_txt(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    cleaned=[]
+    seen=set()
+    for row in (req.rows or []):
+        name = str(row.name or '').strip()
+        phone = _smsganda_clean_phone(row.phone)
+        if not name or not phone:
+            continue
+        key=(name, phone)
+        if key in seen:
+            continue
+        seen.add(key)
+        # 문자간다 텍스트 업로드용: 이름,전화번호 한 줄씩
+        cleaned.append(f'{name},{phone}')
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='TXT로 만들 회원 이름/전화번호가 없습니다.')
+
+    # 문자간다 구형 업로드 화면 호환을 위해 CP949(ANSI) + CRLF로 저장합니다.
+    text = '\r\n'.join(cleaned) + '\r\n'
+    data = text.encode('cp949', errors='replace')
+    bio = io.BytesIO(data)
+    scope_label = {'all':'전체회원','representative':'대표관리자회원','general':'일반관리자회원','selected':'선택회원'}.get(str(req.scope or 'all'), '회원')
+    round_part = f'{req.round_no}회차_' if req.round_no else ''
+    filename = _safe_download_name(f'BBLOTTO_{round_part}문자간다_주소록_{scope_label}.txt')
+    ascii_filename = 'bblotto_smsganda_address.txt'
+    quoted = urllib.parse.quote(filename)
+    return StreamingResponse(
+        bio,
+        media_type='text/plain; charset=cp949',
+        headers={'Content-Disposition': f"attachment; filename={ascii_filename}; filename*=UTF-8''{quoted}"}
+    )
+
+@app.get('/api/rc7-5/status')
+def rc7_5_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC7-5 SMSGANDA TXT CP949', 'engine': DB_ENGINE, 'summary': '문자간다 TXT ANSI/CP949 주소록 생성 기본 지원', 'admin': admin.get('username')}
+
+@app.get('/api/rc7-6/status')
+def rc7_6_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC7-6 SMSGANDA TEMPLATE XLS', 'engine': DB_ENGINE, 'summary': '문자간다 샘플 XLS 헤더 형식(이름/휴대전화/[*1*]~[*4*]) 적용', 'admin': admin.get('username')}
+# ===================== /RC7-5 SMSGANDA TXT CP949 EXPORT =====================
 
 @app.get('/api/rc7-4/status')
 def rc7_4_status(authorization: str|None = Header(default=None)):
