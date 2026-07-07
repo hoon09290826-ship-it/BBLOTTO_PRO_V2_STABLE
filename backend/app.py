@@ -6664,12 +6664,21 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     scope_label = {'all':'전체회원','representative':'대표관리자회원','general':'일반관리자회원','selected':'선택회원'}.get(str(req.scope or 'all'), '회원')
     round_part = f'{req.round_no}회차_' if req.round_no else ''
     filename = _safe_download_name(f'BBLOTTO_{round_part}문자간다_주소록_{scope_label}.xls')
+    # Starlette/HTTP headers are latin-1 encoded. Korean text in the plain filename= part
+    # causes a server 500 error, so keep filename= ASCII and put the real Korean filename
+    # only in RFC 5987 filename*=UTF-8''.
+    ascii_filename = 'bblotto_smsganda_address.xls'
     quoted = urllib.parse.quote(filename)
     return StreamingResponse(
         bio,
         media_type='application/vnd.ms-excel',
-        headers={'Content-Disposition': f"attachment; filename={filename}; filename*=UTF-8''{quoted}"}
+        headers={'Content-Disposition': f"attachment; filename={ascii_filename}; filename*=UTF-8''{quoted}"}
     )
+
+@app.get('/api/rc7-4/status')
+def rc7_4_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC7-4 SMSGANDA HEADER FIX', 'engine': DB_ENGINE, 'summary': '문자간다 XLS 다운로드 한글 파일명 헤더 오류 수정', 'admin': admin.get('username')}
 
 @app.get('/api/rc7-3/status')
 def rc7_3_status(authorization: str|None = Header(default=None)):

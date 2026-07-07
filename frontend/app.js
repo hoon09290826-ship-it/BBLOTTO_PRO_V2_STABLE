@@ -1379,7 +1379,13 @@ async function downloadSmsGandaXls(scope='all'){
   if(r.status === 401){ localStorage.removeItem('bb_v34_token'); location.href='/'; return; }
   if(!r.ok){
     let msg = '문자간다 XLS 생성 실패';
-    try{ const j = await r.json(); msg = j.detail || j.error || j.message || msg; }catch(e){ try{ msg = await r.text(); }catch(_){} }
+    try{
+      const j = await r.json();
+      msg = j.detail || j.message || j.error?.message || j.error?.type || msg;
+      if(typeof msg !== 'string') msg = JSON.stringify(msg);
+    }catch(e){
+      try{ msg = await r.text(); }catch(_){}
+    }
     throw new Error(msg);
   }
   const blob = await r.blob();
