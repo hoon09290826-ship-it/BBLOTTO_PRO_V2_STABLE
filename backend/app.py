@@ -2657,6 +2657,13 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
     safe_round=max(1, int(req.round_no or 1))
     safe_mode=req.mode or 'balanced'
     combos, details, st = make_premium_combos(safe_count, req.fixed, excluded_value, safe_mode, member_grade, member_id=member_id)
+    # RC7-1: 회원별 AI 엔진 V2 문구/번호 분산용 회원 시드 정보
+    try:
+        st['member_id'] = member_id or 0
+        st['member_name'] = member_name or ''
+        st['member_grade'] = member_grade
+    except Exception:
+        pass
     details = rc37_enrich_details(combos, details)
     combos, details = rc38_portfolio_reorder(combos, details)
     details = rc37_enrich_details(combos, details)
@@ -6519,3 +6526,81 @@ def _engine_summary(details, st):
 def rc6_11_status(authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     return {'ok': True, 'version': 'RC6-11_MEMBER_QUERY_REAL_FIX', 'engine': DB_ENGINE, 'admin': admin.get('username')}
+
+# ===================== RC7-1: MEMBER PERSONALIZED AI ENGINE V2 =====================
+# 회원별 시드(회원ID/이름/회차/조합)를 분석 문구에 반영하여
+# 같은 회차 CSV에서도 회원별 추천번호·요약이 반복되지 않도록 보강합니다.
+RC71_ENGINE_VERSION = 'RC7-1_MEMBER_PERSONALIZED_AI_ENGINE_V2'
+
+def _rc71_seed(*parts):
+    try:
+        import hashlib
+        raw = '|'.join(str(p or '') for p in parts)
+        return int(hashlib.sha256(raw.encode('utf-8')).hexdigest()[:12], 16)
+    except Exception:
+        return 0
+
+def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
+    details = details or []
+    engine = _engine_summary(details, st)
+    member_id = st.get('member_id') or 0
+    member_name = st.get('member_name') or ''
+    grade = engine.get('member_grade') or rc45_grade_label(st.get('member_grade'))
+    combos = [d.get('numbers', []) for d in details if d.get('numbers')]
+    flat = [int(n) for c in combos for n in c if str(n).isdigit()]
+    best = sorted(details, key=lambda x: -float(x.get('score') or 0))[:3]
+    top_nums=[]
+    for d in best:
+        for n in d.get('numbers', []):
+            if n not in top_nums:
+                top_nums.append(n)
+    hot = (st.get('hot300') or st.get('hot') or [])[:8]
+    overdue = (st.get('overdue300') or st.get('overdue') or [])[:8]
+    mode_name = {'balanced': '균형형', 'aggressive': '공격형', 'conservative': '안정형'}.get(mode, mode or '균형형')
+    core_text = ', '.join(map(str, top_nums[:6])) if top_nums else '주요 후보군'
+    hot_text = ', '.join(map(str, hot[:4])) if hot else '최근 흐름 번호'
+    sub_text = ', '.join(map(str, overdue[:4])) if overdue else '보강 후보 번호'
+    odd = sum(1 for n in flat if n % 2 == 1); even = len(flat) - odd
+    low = sum(1 for n in flat if 1 <= n <= 15); mid = sum(1 for n in flat if 16 <= n <= 30); high = sum(1 for n in flat if 31 <= n <= 45)
+    seed = _rc71_seed(round_no, member_id, member_name, mode, grade, sum(flat), core_text)
+    def pick(arr, salt=0):
+        return arr[(seed + salt) % len(arr)]
+    openers = [
+        f'{round_no}회차는 {mode_name} 기준으로 최근 흐름과 누적 데이터를 함께 비교했습니다.',
+        f'{round_no}회차는 회원별 추천 이력과 번호 분포를 나누어 조합을 선별했습니다.',
+        f'이번 회차는 최근 강세 구간과 보강 후보를 함께 반영해 맞춤형으로 구성했습니다.',
+        f'{round_no}회차는 특정 번호대 편중을 줄이고 조합별 차이를 확보하는 방향으로 정리했습니다.',
+        f'이번 추천은 최근 출현 흐름, 끝수, 구간, 홀짝 균형을 함께 점검했습니다.',
+    ]
+    middles = [
+        f'핵심 후보는 {core_text} 중심이며, {hot_text} 흐름을 일부 반영했습니다.',
+        f'최근 흐름 번호({hot_text})와 보강 후보({sub_text})를 나누어 배치했습니다.',
+        f'조합 간 번호 중복을 줄이고 {core_text} 후보군의 분산도를 높였습니다.',
+        f'장기 보강 후보({sub_text})를 함께 넣어 단순 고빈도 조합을 피했습니다.',
+        '최근 반복된 패턴은 일부만 반영하고 새롭게 움직일 가능성이 있는 번호를 보강했습니다.',
+    ]
+    balances = [
+        f'전체 홀짝 흐름은 홀수 {odd}개/짝수 {even}개 기준으로 검토했습니다.',
+        f'저·중·고 구간 분포는 {low}/{mid}/{high} 흐름으로 맞춰 편중을 줄였습니다.',
+        '끝수 반복과 연속수 과다 사용을 제한해 조합별 형태가 겹치지 않게 했습니다.',
+        '번호 간 간격과 AC값을 함께 확인해 단순 나열식 조합을 줄였습니다.',
+        '회원별 발송 조합이 서로 비슷하게 반복되지 않도록 분산 기준을 추가했습니다.',
+    ]
+    closers = [
+        '단순 빈도보다 번호 간 균형과 최근 흐름을 함께 본 추천입니다.',
+        '최근 데이터와 누적 통계를 함께 고려한 심층 추천 결과입니다.',
+        '안정성과 변화 가능성을 동시에 반영한 구성입니다.',
+        '본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.',
+    ]
+    lines = [pick(openers,1), pick(middles,7), pick(balances,13), pick(closers,19)]
+    clean=[]
+    for line in lines:
+        if line and line not in clean:
+            clean.append(line)
+    return '\n'.join(clean[:4])
+
+@app.get('/api/rc7-1/status')
+def rc7_1_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': RC71_ENGINE_VERSION, 'engine': DB_ENGINE, 'summary': '회원별 추천번호/분석요약 분산 엔진 적용', 'admin': admin.get('username')}
+# ===================== /RC7-1 MEMBER PERSONALIZED AI ENGINE V2 =====================

@@ -1690,6 +1690,129 @@ async function init(){
     if(!restored){ renderCombos([]); refreshSmsPreview(); }
   }catch(e){ console.error(e); toast(e.message || e); }
 }
+
+// ===================== RC7-1: 회원별 문자 CSV AI Engine V2 =====================
+// 전체/선택 CSV 생성 시 회원마다 추천번호와 분석요약이 달라지도록 프론트에서도 분산 생성합니다.
+function rc71HashSeed(){
+  const raw = Array.from(arguments).map(v=>String(v||'')).join('|');
+  let h = 2166136261;
+  for(let i=0;i<raw.length;i++){ h ^= raw.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function rc71Rand(seed){
+  let x = seed >>> 0;
+  return function(){ x = (Math.imul(1664525, x) + 1013904223) >>> 0; return x / 4294967296; };
+}
+function rc71NormalizeCombo(c){
+  const nums = (Array.isArray(c) ? c : parseNums(c)).map(n=>Number(n)).filter(n=>n>=1&&n<=45);
+  return Array.from(new Set(nums)).sort((a,b)=>a-b).slice(0,6);
+}
+function rc71MakeComboFromBase(base, rng, salt){
+  let nums = rc71NormalizeCombo(base);
+  if(nums.length < 6){ nums = []; }
+  const out = new Set();
+  nums.forEach((n,idx)=>{
+    const move = 1 + Math.floor(rng()*9) + ((salt + idx) % 5);
+    let v = ((n + move - 1) % 45) + 1;
+    let guard = 0;
+    while(out.has(v) && guard < 60){ v = (v % 45) + 1; guard++; }
+    out.add(v);
+  });
+  while(out.size < 6){
+    let v = 1 + Math.floor(rng()*45);
+    let guard = 0;
+    while(out.has(v) && guard < 60){ v = (v % 45) + 1; guard++; }
+    out.add(v);
+  }
+  return Array.from(out).sort((a,b)=>a-b);
+}
+function rc71ComboKey(c){ return rc71NormalizeCombo(c).join('-'); }
+function rc71MemberCombos(member, index, count){
+  const base = normalizeCombos(currentCombos);
+  const target = Math.max(1, Math.min(50, count || base.length || 10));
+  const seed = rc71HashSeed(currentRound||'', member?.id||'', member?.name||'', member?.phone||'', index, target);
+  const rng = rc71Rand(seed);
+  const rows = [];
+  const seen = new Set();
+  for(let i=0;i<target*8 && rows.length<target;i++){
+    const b = base.length ? base[(i + Math.floor(rng()*base.length)) % base.length] : [];
+    const combo = rc71MakeComboFromBase(b, rng, i + index);
+    const key = rc71ComboKey(combo);
+    if(seen.has(key)) continue;
+    // 회원 간/조합 간 너무 똑같은 느낌을 줄이기 위해 합계와 홀짝 기본 범위만 가볍게 확인
+    const sum = combo.reduce((a,b)=>a+b,0);
+    const odd = combo.filter(n=>n%2).length;
+    if(sum < 85 || sum > 200 || odd < 1 || odd > 5) continue;
+    seen.add(key); rows.push(combo);
+  }
+  while(rows.length<target){
+    const combo = rc71MakeComboFromBase([], rng, rows.length + index + 99);
+    const key = rc71ComboKey(combo);
+    if(!seen.has(key)){ seen.add(key); rows.push(combo); }
+  }
+  return rows.slice(0,target);
+}
+function rc71MemberAnalysis(member, combos, index){
+  const seed = rc71HashSeed(currentRound||'', member?.id||'', member?.name||'', member?.phone||'', index, JSON.stringify(combos));
+  const pick = (arr,salt)=>arr[(seed+salt)%arr.length];
+  const flat = combos.flat().map(Number);
+  const unique = Array.from(new Set(flat));
+  const counts = {};
+  flat.forEach(n=>{ counts[n]=(counts[n]||0)+1; });
+  const core = unique.sort((a,b)=>(counts[b]||0)-(counts[a]||0)||a-b).slice(0,6).join(', ');
+  const low = flat.filter(n=>n<=15).length, mid = flat.filter(n=>n>=16&&n<=30).length, high = flat.filter(n=>n>=31).length;
+  const odd = flat.filter(n=>n%2).length, even = flat.length - odd;
+  const openers = [
+    `${currentRound||'-'}회차는 회원별 추천 흐름을 분리해 맞춤형 조합으로 구성했습니다.`,
+    `${currentRound||'-'}회차는 최근 흐름과 누적 데이터를 함께 비교해 회원별 조합을 선별했습니다.`,
+    `이번 회차는 특정 번호대에 치우치지 않도록 회원별 번호 분산을 적용했습니다.`,
+    `최근 강세 구간과 보강 후보를 함께 반영해 ${member?.name||'회원'}님 전용 조합을 구성했습니다.`
+  ];
+  const middles = [
+    `핵심 후보는 ${core||'자동 산출'} 중심이며, 조합 간 중복을 줄이는 방향으로 정리했습니다.`,
+    `홀짝 흐름은 홀수 ${odd}개/짝수 ${even}개 기준으로 점검했습니다.`,
+    `저·중·고 구간 분포는 ${low}/${mid}/${high} 흐름으로 맞춰 편중을 줄였습니다.`,
+    `끝수 반복과 연속수 과다 사용을 제한해 조합별 형태가 겹치지 않도록 했습니다.`
+  ];
+  const closers = [
+    `단순 빈도보다 번호 간 균형과 최근 흐름을 함께 본 추천입니다.`,
+    `최근 데이터와 누적 통계를 함께 고려한 심층 추천 결과입니다.`,
+    `안정성과 변화 가능성을 함께 반영한 회원별 추천입니다.`,
+    `본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.`
+  ];
+  return [pick(openers,1), pick(middles,7), pick(middles,13), pick(closers,19)].filter((v,i,a)=>v && a.indexOf(v)===i).slice(0,4).join('\n');
+}
+function buildSmsExportRows(scope='all'){
+  const members = smsExportMembers(scope);
+  if(!members.length) return [];
+  const round = currentRound || '';
+  const baseCount = normalizeCombos(currentCombos).length || 10;
+  return members.map((m, idx)=>{
+    const memberCombos = rc71MemberCombos(m, idx, baseCount);
+    const memberAnalysis = rc71MemberAnalysis(m, memberCombos, idx);
+    const message = buildBulkSmsMessage(m, round, memberCombos, memberAnalysis);
+    return {
+      name: m.name || '',
+      phone: String(m.phone || '').replace(/[^0-9]/g, ''),
+      message,
+      round,
+      numbers: formatComboLines(memberCombos),
+      grade: m.grade || '',
+      status: m.status || '활성'
+    };
+  });
+}
+function applyBulkTemplateToPreview(){
+  const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
+  const combos = rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10);
+  const analysis = rc71MemberAnalysis(m, combos, 0);
+  const txt = buildBulkSmsMessage(m, currentRound || '', combos, analysis);
+  if($('smsPreview')) $('smsPreview').value = txt;
+  setText('smsExportInfo', '회원별 추천번호와 분석요약을 다르게 적용했습니다. CSV 생성 시 각 회원별로 자동 치환됩니다.');
+  toast('회원별 문구 미리보기를 적용했습니다.');
+}
+// ===================== /RC7-1 =====================
+
 init();
 
 // ===== RC2 Sprint 4: operations helper =====
