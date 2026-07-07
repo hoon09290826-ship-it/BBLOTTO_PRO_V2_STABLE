@@ -6629,20 +6629,20 @@ def _safe_download_name(name):
     return re.sub(r'[^0-9A-Za-z_\-가-힣]', '_', str(name or 'download'))[:120] or 'download'
 
 def _smsganda_cell_text(value):
-    # RC7-11: 문자간다 구형 미리보기 호환을 위해 셀 내부 줄바꿈을 CRLF로 고정한다.
+    # RC7-16: 문자간다 원본 샘플/엑셀 Alt+Enter 방식에 맞춰 셀 내부 줄바꿈을 LF(CHAR(10))로 저장한다.
+    # 기존 CRLF(\r\n)는 문자간다 엑셀 가져오기에서 줄바꿈이 제거되는 사례가 있어 사용하지 않는다.
     text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
     text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.replace('\n', '\r\n')
+    return text
 
-def _smsganda_space_text(value):
-    # RC7-15: [*3*] 추천번호 전용. 모바일 SMS에서 줄이 깨지지 않도록
-    # 1)3,18,21,30,41,42 형식의 짧은 라인을 그대로 CRLF로 저장한다.
-    text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
+def _smsganda_recommendation_text(value):
+    # RC7-16: [*3*] 추천번호 전용. 직접 붙여넣기 테스트와 동일한 1줄 1조합 LF 저장 방식.
+    text = _smsganda_cell_text(value)
     text = re.sub(r'\s*,\s*', ',', text)
     text = re.sub(r'(?m)^\s*(\d{1,2})\.\s*', r'\1)', text)
     text = re.sub(r'(?m)^\s*(\d{1,2})\)\s*', r'\1)', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip().replace('\n', '\r\n')
+    return text.strip()
 
 @app.post('/api/export/smsganda_xls')
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
@@ -6674,7 +6674,7 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     if not cleaned:
         raise HTTPException(status_code=400, detail='엑셀로 만들 회원 이름/전화번호가 없습니다.')
 
-    # 문자간다 제공 샘플 형식 그대로 맞춥니다.
+    # RC7-16: 문자간다 제공 원본 샘플 형식 + Excel Alt+Enter LF 줄바꿈 저장 방식으로 맞춥니다.
     # 샘플 1행: 이름, 휴대전화, [*1*], [*2*], [*3*], [*4*]
     # 실제 데이터는 2행부터 A열=이름, B열=휴대전화, C~F열=[*1*]~[*4*] 치환값으로 저장합니다.
     wb = xlwt.Workbook(encoding='cp949')
@@ -6702,9 +6702,9 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
         ws.write(idx, 1, phone, text_style)
         ws.write(idx, 2, _smsganda_cell_text(seg1), text_style)
         ws.write(idx, 3, _smsganda_cell_text(seg2), text_style)
-        ws.write(idx, 4, _smsganda_space_text(seg3), text_style)
+        ws.write(idx, 4, _smsganda_recommendation_text(seg3), text_style)
         ws.write(idx, 5, _smsganda_cell_text(seg4), text_style)
-        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, _smsganda_space_text(seg3), seg4)])
+        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, _smsganda_recommendation_text(seg3), seg4)])
         ws.row(idx).height_mismatch = True
         ws.row(idx).height = min(9000, max(360, max_lines * 300))
 

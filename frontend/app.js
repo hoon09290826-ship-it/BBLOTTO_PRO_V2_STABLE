@@ -303,8 +303,8 @@ function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
 }
 function toSmsGandaCellBreaks(text){
-  // RC7-11: 문자간다 구형 XLS 업로드 호환용. 내부 줄바꿈을 CRLF로 전달한다.
-  return normalizeSmsLineBreaks(text || '').replace(/\n/g,'\r\n');
+  // RC7-16: 문자간다 엑셀 가져오기 호환용. Excel Alt+Enter와 같은 LF(CHAR(10))만 전달한다.
+  return normalizeSmsLineBreaks(text || '');
 }
 function buildTemplateMessage(member, round, combos, analysis){
   const tplRaw = $('template')?.value || '';
