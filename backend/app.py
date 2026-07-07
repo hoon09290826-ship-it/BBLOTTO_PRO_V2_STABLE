@@ -6629,22 +6629,21 @@ def _safe_download_name(name):
     return re.sub(r'[^0-9A-Za-z_\-가-힣]', '_', str(name or 'download'))[:120] or 'download'
 
 def _smsganda_cell_text(value):
-    # RC7-16: 문자간다 원본 샘플/엑셀 Alt+Enter 방식에 맞춰 셀 내부 줄바꿈을 LF(CHAR(10))로 저장한다.
-    # 기존 CRLF(\r\n)는 문자간다 엑셀 가져오기에서 줄바꿈이 제거되는 사례가 있어 사용하지 않는다.
+    # RC7-19: 문자간다 직접 붙여넣기와 같은 Windows 줄바꿈(CRLF)을 셀 값에 저장합니다.
+    # Excel Alt+Enter(LF)만 쓰면 가져오기에서 줄바꿈이 사라지는 환경이 있어,
+    # 모든 내부 줄바꿈을 CRLF(\r\n)로 통일합니다.
     text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
     text = re.sub(r'\n{3,}', '\n\n', text)
-    return text
+    return text.replace('\n', '\r\n')
 
 def _smsganda_recommendation_text(value):
-    # RC7-18: 문자간다 엑셀 가져오기는 셀 내부 줄바꿈을 삭제하는 환경이 있어
-    # [*3*]/[*4*] 셀 값은 줄바꿈 없는 한 줄 텍스트로 고정합니다.
+    # RC7-19: 추천번호 셀도 한 줄로 압축하지 않고 CRLF 줄바꿈을 그대로 저장합니다.
+    # 문자간다 입력창에 직접 붙여넣었을 때 정상 표시된 형식과 맞추기 위한 처리입니다.
     text = _smsganda_cell_text(value)
     text = re.sub(r'\s*,\s*', ',', text)
     text = re.sub(r'(?m)^\s*(\d{1,2})\.\s*', r'\1)', text)
     text = re.sub(r'(?m)^\s*(\d{1,2})\)\s*', r'\1)', text)
-    text = text.replace('\r', ' ').replace('\n', ' ')
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return text.strip()
 
 @app.post('/api/export/smsganda_xls')
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
@@ -6677,8 +6676,8 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     if not cleaned:
         raise HTTPException(status_code=400, detail='엑셀로 만들 회원 이름/전화번호가 없습니다.')
 
-    # RC7-17: 구형 .xls/OLEDB 가져오기에서 셀 줄바꿈이 삭제되는 문제가 확인되어
-    # Excel 2007+ .xlsx 방식으로 저장합니다. 셀 값은 직접 붙여넣기와 같은 LF(CHAR(10))를 사용합니다.
+    # RC7-19: Excel 2007+ .xlsx 방식으로 저장하고, 셀 내부 줄바꿈은 CRLF로 저장합니다.
+    # 문자간다 직접 붙여넣기 테스트에서 줄바꿈이 정상 표시된 형식에 맞춘 패치입니다.
     wb = Workbook()
     ws = wb.active
     ws.title = 'Sheet1'
