@@ -285,6 +285,19 @@ function formatComboLines(combos){
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n)));
   return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n') || '추천번호 없음';
 }
+function formatComboNumbersPadded(combo){
+  return (combo || []).slice(0,6).map(n=>String(Number(n)).padStart(2,' ')).join(', ');
+}
+function formatSmsGandaSpaceCombos(combos){
+  // RC7-13: 문자간다는 셀 내부 줄바꿈을 없애는 경우가 있어 공백 정렬 방식으로 고정합니다.
+  const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
+  if(!normalized.length) return '추천번호 없음';
+  const gap = '              '; // 문자간다 업로드 후에도 유지되는 안전 여백
+  return normalized.map((c,i)=>`${String(i+1).padStart(2,' ')}. ${formatComboNumbersPadded(c)}`).join(gap);
+}
+function buildSmsGandaRecommendationSegment(combos){
+  return '[추천번호]' + '                            ' + formatSmsGandaSpaceCombos(combos);
+}
 function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
 }
@@ -299,6 +312,7 @@ function buildTemplateMessage(member, round, combos, analysis){
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
   const numbers = formatComboLines(combos || currentCombos);
+  const smsGandaNumbers = formatSmsGandaSpaceCombos(combos || currentCombos);
   return normalizeSmsLineBreaks(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회차}', String(round || currentRound || '-'))
@@ -1412,10 +1426,12 @@ function resetAllSmsSegments(){
   setText('smsExportInfo','문자간다 문구 전체를 기본값으로 복원했습니다.');
 }
 function buildSmsSegmentsForMember(member, round, combos, analysis){
+  // RC7-13: 문자간다 [*3*]는 줄바꿈 대신 공백 정렬 전용 포맷으로 고정합니다.
+  // 문자간다에서 줄바꿈이 사라져도 번호가 붙지 않고 읽히도록 하기 위한 전용 처리입니다.
   return {
     seg1: applyTemplate(getSmsSegment(1), member, round, combos, analysis),
     seg2: applyTemplate(getSmsSegment(2), member, round, combos, analysis),
-    seg3: applyTemplate(getSmsSegment(3), member, round, combos, analysis),
+    seg3: buildSmsGandaRecommendationSegment(combos || currentCombos),
     seg4: applyTemplate(getSmsSegment(4), member, round, combos, analysis)
   };
 }
@@ -1444,11 +1460,13 @@ function applyTemplate(template, member, round, combos, analysis){
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
   const numbers = formatComboLines(combos || currentCombos);
+  const smsGandaNumbers = formatSmsGandaSpaceCombos(combos || currentCombos);
   return normalizeSmsLineBreaks(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회원이름}', name)
     .replaceAll('{이름}', name)
     .replaceAll('{회차}', String(round || currentRound || '-'))
+    .replaceAll('{추천번호_문자간다}', smsGandaNumbers)
     .replaceAll('{추천번호}', numbers)
     .replaceAll('{번호}', numbers)
     .replaceAll('{분석}', analysisText)

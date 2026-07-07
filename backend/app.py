@@ -6630,10 +6630,18 @@ def _safe_download_name(name):
 
 def _smsganda_cell_text(value):
     # RC7-11: 문자간다 구형 미리보기 호환을 위해 셀 내부 줄바꿈을 CRLF로 고정한다.
-    # Excel Alt+Enter와 동일한 줄바꿈을 최대한 유지하도록 \n/\r/문자열 \\n 모두 정규화한다.
     text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.replace('\n', '\r\n')
+
+def _smsganda_space_text(value):
+    # RC7-13: [*3*] 추천번호 전용. 문자간다에서 줄바꿈이 지워져 번호가 붙는 현상을 막기 위해
+    # 줄바꿈을 넉넉한 공백으로 바꿔 저장한다. 이미 들어간 공백은 보존한다.
+    text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
+    text = re.sub(r'\n+', '              ', text)
+    text = re.sub(r'(?<=\])(?=\d+\.)', '                            ', text)
+    text = re.sub(r'(?<=[0-9])(?=\d{1,2}\.\s)', '              ', text)
+    return text.strip()
 
 @app.post('/api/export/smsganda_xls')
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
@@ -6693,9 +6701,9 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
         ws.write(idx, 1, phone, text_style)
         ws.write(idx, 2, _smsganda_cell_text(seg1), text_style)
         ws.write(idx, 3, _smsganda_cell_text(seg2), text_style)
-        ws.write(idx, 4, _smsganda_cell_text(seg3), text_style)
+        ws.write(idx, 4, _smsganda_space_text(seg3), text_style)
         ws.write(idx, 5, _smsganda_cell_text(seg4), text_style)
-        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, seg3, seg4)])
+        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, seg4)])
         ws.row(idx).height_mismatch = True
         ws.row(idx).height = min(9000, max(360, max_lines * 300))
 
