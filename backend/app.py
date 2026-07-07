@@ -6648,9 +6648,10 @@ def _smsganda_recommendation_text(value):
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
     require_admin(authorization)
     try:
-        import xlwt
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font
     except Exception as e:
-        raise HTTPException(status_code=500, detail='문자간다 XLS 생성 모듈(xlwt)이 설치되지 않았습니다. requirements.txt에 xlwt를 추가한 뒤 재배포하세요.') from e
+        raise HTTPException(status_code=500, detail='문자간다 XLSX 생성 모듈(openpyxl)이 설치되지 않았습니다. requirements.txt에 openpyxl을 추가한 뒤 재배포하세요.') from e
 
     cleaned=[]
     seen=set()
@@ -6674,64 +6675,54 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
     if not cleaned:
         raise HTTPException(status_code=400, detail='엑셀로 만들 회원 이름/전화번호가 없습니다.')
 
-    # RC7-16: 문자간다 제공 원본 샘플 형식 + Excel Alt+Enter LF 줄바꿈 저장 방식으로 맞춥니다.
-    # 샘플 1행: 이름, 휴대전화, [*1*], [*2*], [*3*], [*4*]
-    # 실제 데이터는 2행부터 A열=이름, B열=휴대전화, C~F열=[*1*]~[*4*] 치환값으로 저장합니다.
-    wb = xlwt.Workbook(encoding='cp949')
-    ws = wb.add_sheet('Sheet1')
-
-    header_style = xlwt.XFStyle()
-    header_style.num_format_str = '@'
-    header_font = xlwt.Font()
-    header_font.bold = True
-    header_style.font = header_font
-
-    text_style = xlwt.XFStyle()
-    text_style.num_format_str = '@'
-    text_alignment = xlwt.Alignment()
-    text_alignment.wrap = 1
-    text_alignment.vert = xlwt.Alignment.VERT_TOP
-    text_style.alignment = text_alignment
-
+    # RC7-17: 구형 .xls/OLEDB 가져오기에서 셀 줄바꿈이 삭제되는 문제가 확인되어
+    # Excel 2007+ .xlsx 방식으로 저장합니다. 셀 값은 직접 붙여넣기와 같은 LF(CHAR(10))를 사용합니다.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
     headers = ['이름', '휴대전화', '[*1*]', '[*2*]', '[*3*]', '[*4*]']
-    for col, header in enumerate(headers):
-        ws.write(0, col, header, header_style)
+    ws.append(headers)
 
-    for idx, (name, phone, seg1, seg2, seg3, seg4) in enumerate(cleaned, start=1):
-        ws.write(idx, 0, name, text_style)
-        ws.write(idx, 1, phone, text_style)
-        ws.write(idx, 2, _smsganda_cell_text(seg1), text_style)
-        ws.write(idx, 3, _smsganda_cell_text(seg2), text_style)
-        ws.write(idx, 4, _smsganda_recommendation_text(seg3), text_style)
-        ws.write(idx, 5, _smsganda_cell_text(seg4), text_style)
-        max_lines = max(1, *[_smsganda_cell_text(v).count('\n') + 1 for v in (seg1, seg2, _smsganda_recommendation_text(seg3), seg4)])
-        ws.row(idx).height_mismatch = True
-        ws.row(idx).height = min(9000, max(360, max_lines * 300))
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(wrap_text=True, vertical='top')
 
-    widths = [16, 18, 34, 44, 44, 28]
-    for col, width in enumerate(widths):
-        ws.col(col).width = width * 256
+    for idx, (name, phone, seg1, seg2, seg3, seg4) in enumerate(cleaned, start=2):
+        values = [
+            name,
+            phone,
+            _smsganda_cell_text(seg1),
+            _smsganda_cell_text(seg2),
+            _smsganda_recommendation_text(seg3),
+            _smsganda_cell_text(seg4),
+        ]
+        for col, value in enumerate(values, start=1):
+            cell = ws.cell(row=idx, column=col, value=value)
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+            # 전화번호는 숫자로 변환되지 않게 문자열로 고정
+            cell.number_format = '@'
+        max_lines = max(1, *[str(v or '').count('\n') + 1 for v in values[2:]])
+        ws.row_dimensions[idx].height = min(240, max(30, max_lines * 18))
+
+    widths = [16, 18, 42, 60, 34, 32]
+    for i, width in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64+i)].width = width
 
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
-    scope_label = {'all':'전체회원','representative':'대표관리자회원','general':'일반관리자회원','selected':'선택회원'}.get(str(req.scope or 'all'), '회원')
-    round_part = f'{req.round_no}회차_' if req.round_no else ''
-    filename = _safe_download_name(f'BBLOTTO_{round_part}문자간다_주소록_{scope_label}.xls')
-    # Starlette/HTTP headers are latin-1 encoded. Korean text in the plain filename= part
-    # causes a server 500 error, so keep filename= ASCII and put the real Korean filename
-    # only in RFC 5987 filename*=UTF-8''.
-    ascii_filename = 'bblotto_smsganda_address.xls'
+
+    round_part = f'{req.round_no}회차_' if getattr(req, 'round_no', None) else ''
+    scope_label = {'all':'전체회원','selected':'선택회원','group':'그룹회원'}.get(str(getattr(req, 'scope', '') or ''), '전체회원')
+    filename = _safe_download_name(f'BBLOTTO_{round_part}문자간다_주소록_{scope_label}.xlsx')
+    ascii_filename = 'bblotto_smsganda_address.xlsx'
     quoted = urllib.parse.quote(filename)
     return StreamingResponse(
         bio,
-        media_type='application/vnd.ms-excel',
-        headers={'Content-Disposition': f"attachment; filename={ascii_filename}; filename*=UTF-8''{quoted}"}
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{quoted}'}
     )
 
-
-
-# ===================== RC7-5 SMSGANDA TXT CP949 EXPORT =====================
 @app.post('/api/export/smsganda_txt')
 def export_smsganda_txt(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
     require_admin(authorization)
