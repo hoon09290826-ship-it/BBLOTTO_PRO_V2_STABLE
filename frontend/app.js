@@ -296,21 +296,19 @@ function formatSmsGandaSpaceCombos(combos){
   if(!normalized.length) return '추천번호 없음';
   return normalized.map((c,i)=>`${i+1})${formatComboNumbersCompact(c)}`).join('\n');
 }
-function formatSmsGandaOneLineCombos(combos, start=0, end=null){
-  // RC7-18: 문자간다 엑셀 가져오기에서는 셀 내부 줄바꿈이 삭제됩니다.
-  // 그래서 셀 안에는 줄바꿈을 넣지 않고, 조합 사이를 / 로 구분합니다.
-  // 실제 줄바꿈은 문자간다 문자입력창에서 [*3*]와 [*4*] 사이에 직접 넣는 방식입니다.
+function formatSmsGandaLineCombos(combos, start=0, end=null){
+  // RC7-19: 문자간다 직접 붙여넣기에서 정상 확인된 1줄 1조합 형식.
+  // 엑셀 생성 단계에서 CRLF로 저장되므로 여기서는 일반 \n으로 조립합니다.
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
   const part = normalized.slice(start, end ?? normalized.length);
   if(!part.length) return '추천번호 없음';
-  return part.map((c,i)=>`${start+i+1})${formatComboNumbersCompact(c)}`).join(' / ');
+  return part.map((c,i)=>`${start+i+1}. ${c.join(', ')}`).join('\n');
 }
 function buildSmsGandaRecommendationSegment(combos){
-  return '[추천번호] ' + formatSmsGandaOneLineCombos(combos, 0, 5);
+  return '[추천번호]\n' + formatSmsGandaLineCombos(combos, 0, 10);
 }
 function buildSmsGandaRecommendationSegment2(combos){
-  const tail = formatSmsGandaOneLineCombos(combos, 5, 10);
-  return tail === '추천번호 없음' ? '좋은 결과 있으시길 바랍니다.' : tail + ' 좋은 결과 있으시길 바랍니다.';
+  return '좋은 결과 있으시길 바랍니다.';
 }
 function compactSmsGandaAnalysis(text){
   return normalizeText(text || '')
@@ -323,8 +321,9 @@ function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
 }
 function toSmsGandaCellBreaks(text){
-  // RC7-16: 문자간다 엑셀 가져오기 호환용. Excel Alt+Enter와 같은 LF(CHAR(10))만 전달한다.
-  return normalizeSmsLineBreaks(text || '');
+  // RC7-20: 문자간다 엑셀 가져오기에서 셀 내부 CR/LF가 사라지는 문제 회피.
+  // 일반 줄바꿈 대신 유니코드 LINE SEPARATOR(U+2028)를 넣어 최종 문자에서 줄 구분을 유지합니다.
+  return normalizeSmsLineBreaks(text || '').replace(/\n/g, '\u2028');
 }
 function buildTemplateMessage(member, round, combos, analysis){
   const tplRaw = $('template')?.value || '';
@@ -1408,9 +1407,9 @@ function getBulkSmsTemplate(){
 
 // ===================== RC7-8 SMSGANDA SEGMENT CENTER =====================
 const BB_SMS_SEG_DEFAULTS = {
-  1: '안녕하세요 {회원명}님, BBLOTTO입니다.\n\n{회차}회차 추천번호 및 이번회차 분석입니다.',
-  2: '[이번회차 핵심 분석]\n\n{분석}',
-  3: '[추천번호]\n\n{추천번호}',
+  1: '안녕하세요 {회원명}님, BBLOTTO입니다.\n{회차}회차 추천번호 및 이번회차 분석입니다.',
+  2: '[이번회차 핵심 분석]\n{분석}',
+  3: '[추천번호]\n{추천번호}',
   4: '좋은 결과 있으시길 바랍니다.'
 };
 function getSmsSegment(n){
@@ -1447,9 +1446,8 @@ function resetAllSmsSegments(){
   setText('smsExportInfo','문자간다 문구 전체를 기본값으로 복원했습니다.');
 }
 function buildSmsSegmentsForMember(member, round, combos, analysis){
-  // RC7-18: 문자간다 엑셀 업로드는 셀 내부 줄바꿈을 삭제하므로
-  // 각 [*1*]~[*4*] 셀은 전부 '한 줄'로 저장합니다.
-  // 문자간다 입력창 템플릿에서 [*1*], [*2*], [*3*], [*4*] 사이에 직접 줄바꿈을 넣어 사용하세요.
+  // RC7-19: [*3*] 추천번호를 직접 붙여넣기와 동일한 1줄 1조합 형식으로 생성합니다.
+  // 서버 XLSX 생성 단계에서 내부 줄바꿈을 CRLF로 저장합니다.
   const name = member?.name || '회원';
   const roundText = String(round || currentRound || '-');
   const analysisOneLine = compactSmsGandaAnalysis(analysis || currentAnalysis || '최근 흐름과 누적 데이터를 함께 비교해 회원별 조합을 선별했습니다. 본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.');

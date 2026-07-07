@@ -6629,12 +6629,12 @@ def _safe_download_name(name):
     return re.sub(r'[^0-9A-Za-z_\-가-힣]', '_', str(name or 'download'))[:120] or 'download'
 
 def _smsganda_cell_text(value):
-    # RC7-19: 문자간다 직접 붙여넣기와 같은 Windows 줄바꿈(CRLF)을 셀 값에 저장합니다.
-    # Excel Alt+Enter(LF)만 쓰면 가져오기에서 줄바꿈이 사라지는 환경이 있어,
-    # 모든 내부 줄바꿈을 CRLF(\r\n)로 통일합니다.
+    # RC7-20: 문자간다 엑셀 가져오기에서 CR/LF가 공백으로 바뀌는 문제 회피.
+    # 실제 줄바꿈(\r/\n)은 문자간다가 제거하므로, 유니코드 LINE SEPARATOR(U+2028)로 저장합니다.
+    # 문자 입력창에 직접 붙여넣었을 때처럼 보이도록 최종 문자 화면에서 줄 구분을 유지하는 호환 방식입니다.
     text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.replace('\n', '\r\n')
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text.replace('\n', '\u2028')
 
 def _smsganda_recommendation_text(value):
     # RC7-19: 추천번호 셀도 한 줄로 압축하지 않고 CRLF 줄바꿈을 그대로 저장합니다.
@@ -6702,7 +6702,7 @@ def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Head
             cell.alignment = Alignment(wrap_text=True, vertical='top')
             # 전화번호는 숫자로 변환되지 않게 문자열로 고정
             cell.number_format = '@'
-        max_lines = max(1, *[str(v or '').count('\n') + 1 for v in values[2:]])
+        max_lines = max(1, *[str(v or '').count('\n') + str(v or '').count('\u2028') + 1 for v in values[2:]])
         ws.row_dimensions[idx].height = min(240, max(30, max_lines * 18))
 
     widths = [16, 18, 42, 60, 34, 32]
