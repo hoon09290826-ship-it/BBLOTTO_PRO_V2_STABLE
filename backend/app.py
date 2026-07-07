@@ -6604,3 +6604,11 @@ def rc7_1_status(authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     return {'ok': True, 'version': RC71_ENGINE_VERSION, 'engine': DB_ENGINE, 'summary': '회원별 추천번호/분석요약 분산 엔진 적용', 'admin': admin.get('username')}
 # ===================== /RC7-1 MEMBER PERSONALIZED AI ENGINE V2 =====================
+
+
+# ===================== RC7-2 SMSGANDA XLS EXPORT =====================
+@app.get('/api/rc7-2/status')
+def rc7_2_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC7-2 SMSGANDA XLS', 'engine': DB_ENGINE, 'summary': '문자간다 A열 이름/B열 전화번호 XLS 업로드 파일 생성 지원', 'admin': admin.get('username')}
+# ===================== /RC7-2 SMSGANDA XLS EXPORT =====================

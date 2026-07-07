@@ -1351,6 +1351,63 @@ function downloadSmsCsv(scope='all'){
   setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 발송용 CSV 생성 완료 · 문자간다 대량등록에 업로드하세요.`);
   toast(`문자 발송용 CSV ${rows.length}건 생성 완료`);
 }
+
+
+// RC7-2: 문자간다 전용 XLS/TXT 생성 (A열=이름, B열=전화번호)
+function escapeHtml(value){
+  return String(value ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+function downloadSmsGandaXls(scope='all'){
+  const members = smsExportMembers(scope);
+  if(!members.length){ alert(scope === 'selected' ? '선택된 회원이 없거나 연락처가 없습니다.' : '문자간다 업로드용 회원 연락처가 없습니다.'); return; }
+  const rows = members.map(m=>({
+    name: String(m.name || m.member_name || '회원').trim(),
+    phone: String(m.phone || '').replace(/[^0-9]/g, '')
+  })).filter(r=>r.name && r.phone);
+  if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
+  const tableRows = rows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.phone)}</td></tr>`).join('');
+  const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><tbody>${tableRows}</tbody></table></body></html>`;
+  const roundPart = currentRound ? `${currentRound}회차_` : '';
+  downloadTextFile(`BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.xls`, html, 'application/vnd.ms-excel;charset=utf-8;');
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 XLS 생성 완료 · 문자간다 안내 기준: A열 이름, B열 전화번호`);
+  toast(`문자간다 XLS ${rows.length}명 생성 완료`);
+}
+function downloadSmsGandaTxt(scope='all'){
+  const members = smsExportMembers(scope);
+  if(!members.length){ alert(scope === 'selected' ? '선택된 회원이 없거나 연락처가 없습니다.' : '문자간다 업로드용 회원 연락처가 없습니다.'); return; }
+  const lines = members.map(m=>`${String(m.name || m.member_name || '회원').trim()}\t${String(m.phone || '').replace(/[^0-9]/g, '')}`).filter(x=>x.trim());
+  const roundPart = currentRound ? `${currentRound}회차_` : '';
+  downloadTextFile(`BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.txt`, lines.join('\n'), 'text/plain;charset=utf-8;');
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${lines.length}명 문자간다 TXT 생성 완료 · A열 이름/B열 전화번호 형태`);
+  toast(`문자간다 TXT ${lines.length}명 생성 완료`);
+}
+function copySmsGandaMessage(){
+  try{
+    const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
+    const combos = (typeof rc71MemberCombos === 'function') ? rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10) : normalizeCombos(currentCombos);
+    const analysis = (typeof rc71MemberAnalysis === 'function') ? rc71MemberAnalysis(m, combos, 0) : (currentAnalysis || '');
+    const text = buildBulkSmsMessage(m, currentRound || '', combos, analysis);
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); }
+    else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    setText('smsExportInfo', '문자간다 메시지 입력창에 붙여넣을 문자내용을 복사했습니다. XLS는 주소록 업로드용입니다.');
+    toast('문자내용 복사 완료');
+  }catch(e){ console.error(e); alert('문자내용 복사 중 오류: '+(e.message||e)); }
+}
+function bbDownloadSmsGandaXls(){ try{ downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+function bbDownloadSmsGandaXlsAll(){ try{ downloadSmsGandaXls('all'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+function bbDownloadSmsGandaXlsSelected(){ try{ downloadSmsGandaXls('selected'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+function bbDownloadSmsGandaTxt(){ try{ downloadSmsGandaTxt(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 TXT 생성 중 오류: '+(e.message||e)); } }
+window.bbDownloadSmsGandaXls = bbDownloadSmsGandaXls;
+window.bbDownloadSmsGandaXlsAll = bbDownloadSmsGandaXlsAll;
+window.bbDownloadSmsGandaXlsSelected = bbDownloadSmsGandaXlsSelected;
+window.bbDownloadSmsGandaTxt = bbDownloadSmsGandaTxt;
+window.bbCopySmsGandaMessage = copySmsGandaMessage;
+
 function copyBulkSmsText(){
   const rows = buildSmsExportRows('all');
   if(!rows.length){ alert('복사할 회원 연락처가 없습니다.'); return; }
