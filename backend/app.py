@@ -419,6 +419,8 @@ def init_db():
             c.execute('ALTER TABLE members ADD COLUMN source TEXT DEFAULT "직접등록"')
         if 'created_by' not in member_cols:
             c.execute('ALTER TABLE members ADD COLUMN created_by INTEGER DEFAULT 0')
+        if 'preferred_count' not in member_cols:
+            c.execute('ALTER TABLE members ADD COLUMN preferred_count INTEGER DEFAULT 10')
         c.execute('CREATE TABLE IF NOT EXISTS recommendations(id INTEGER PRIMARY KEY AUTOINCREMENT, member_id INTEGER, member_name TEXT, round_no INTEGER, mode TEXT, count INTEGER, numbers TEXT, analysis TEXT, sms TEXT, created_by INTEGER, created_at TEXT)')
         # V40 Phase1: 기존 Render SQLite가 오래된 스키마여도 자동 복구합니다.
         rec_cols = table_cols(c, 'recommendations')
@@ -1319,7 +1321,7 @@ class AdminReq(BaseModel): username:str; name:str='관리자'; password:str; rol
 class AdminUpdateReq(BaseModel): name:str|None=None; password:str|None=None; role:str|None=None; memo:str|None=None; is_active:int|None=None
 class MyAccountReq(BaseModel): name:str|None=None; phone:str|None=None; memo:str|None=None; current_password:str|None=None; new_password:str|None=None
 class PasswordReq(BaseModel): password:str
-class MemberReq(BaseModel): name:str; phone:str=''; grade:str='일반'; memo:str=''; status:str='활성'; priority:str='보통'; source:str='직접등록'
+class MemberReq(BaseModel): name:str; phone:str=''; grade:str='일반'; memo:str=''; status:str='활성'; priority:str='보통'; source:str='직접등록'; preferred_count:int=10
 class MemberStatusReq(BaseModel): status:str; memo:str|None=None
 class MemberMemoReq(BaseModel): memo:str=''
 class MemberNoteReq(BaseModel): note:str; note_type:str='상담'
@@ -2484,7 +2486,8 @@ def bulk_member_status(req:MemberBulkStatusReq, request:Request, authorization: 
 def add_member(req:MemberReq, request:Request, authorization: str|None = Header(default=None)):
     admin=require_admin(authorization)
     with con() as c:
-        cur=c.execute('INSERT INTO members(name,phone,grade,memo,status,priority,source,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(req.name,req.phone,req.grade,req.memo,req.status,req.priority,req.source,admin['id'],now(),now()))
+        preferred_count=max(1, min(int(req.preferred_count or 10), 100))
+        cur=c.execute('INSERT INTO members(name,phone,grade,memo,status,priority,source,preferred_count,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(req.name,req.phone,req.grade,req.memo,req.status,req.priority,req.source,preferred_count,admin['id'],now(),now()))
         c.commit(); mid=cur.lastrowid
     log_action(admin,'CREATE_MEMBER',f'회원 등록: {req.name}',request); return {'id':mid}
 
@@ -2501,7 +2504,8 @@ def update_member(member_id:int, req:MemberReq, request:Request, authorization: 
     admin=require_admin(authorization)
     with con() as c:
         assert_member_access(c, admin, member_id)
-        c.execute('UPDATE members SET name=?, phone=?, grade=?, memo=?, status=?, priority=?, source=?, updated_at=? WHERE id=?', (req.name, req.phone, req.grade, req.memo, req.status, req.priority, req.source, now(), member_id))
+        preferred_count=max(1, min(int(req.preferred_count or 10), 100))
+        c.execute('UPDATE members SET name=?, phone=?, grade=?, memo=?, status=?, priority=?, source=?, preferred_count=?, updated_at=? WHERE id=?', (req.name, req.phone, req.grade, req.memo, req.status, req.priority, req.source, preferred_count, now(), member_id))
         c.commit()
     log_action(admin,'UPDATE_MEMBER',f'회원 수정 ID {member_id}: {req.name}',request)
     return {'ok':True}

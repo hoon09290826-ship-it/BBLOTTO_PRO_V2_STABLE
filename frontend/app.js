@@ -178,6 +178,22 @@ function starLabel(d){ const s=Number(d?.score ?? d?.vip_score ?? d?.ai_score ??
 function top3FromDetails(sets, details=[]){ return (sets||[]).map((nums,i)=>({nums, detail:details[i]||{}, idx:i+1})).sort((a,b)=>Number(b.detail.score||0)-Number(a.detail.score||0)).slice(0,3); }
 function parseNumsInput(v){ return String(v||'').match(/\d+/g)?.map(Number).filter(n=>n>=1&&n<=45) || []; }
 function getSelectedMember(){ const id=String($('genMember')?.value||''); return membersCache.find(m=>String(m.id)===id) || null; }
+function getMemberPreferredCount(m){
+  const n = Number(m?.preferred_count || m?.combo_count || m?.recommend_count || 10);
+  return Math.max(1, Math.min(Number.isFinite(n) ? n : 10, 100));
+}
+function setGenCountValue(count){
+  const sel=$('genCount'); if(!sel) return;
+  const v=String(getMemberPreferredCount({preferred_count:count}));
+  if(!Array.from(sel.options).some(o=>String(o.value)===v)){
+    const opt=document.createElement('option'); opt.value=v; opt.textContent=v; sel.appendChild(opt);
+  }
+  sel.value=v;
+}
+function applySelectedMemberPreferredCount(){
+  const m=getSelectedMember();
+  if(m) setGenCountValue(getMemberPreferredCount(m));
+}
 
 function normalizeText(value){
   // V50 13차: textarea/미리보기에는 JSON 객체가 아니라 실제 문구만 표시한다.
@@ -457,7 +473,7 @@ function normalizePhoneText(v){ return String(v||'').replace(/\D/g,''); }
 function normalizePhoneForSearch(v){ return normalizePhoneText(v); }
 function getMemberSearchText(m){
   return normalizeSearchText([
-    m.name, m.phone, normalizePhoneText(m.phone), m.grade, memberGradeLabel(m.grade), m.status, m.priority, m.source, m.memo,
+    m.name, m.phone, normalizePhoneText(m.phone), m.grade, memberGradeLabel(m.grade), m.status, m.priority, (m.preferred_count||10)+'조합', m.source, m.memo,
     m.registered_by_name, m.created_by_name, m.registered_by_username, m.created_by, m.admin_name
   ].join(' '));
 }
@@ -566,11 +582,11 @@ function renderMembers(list){
     return `<div class="member-row member-card ${muted?'muted':''}">
       <div>
         <b>${esc(m.name||'')}</b>
-        <p>${esc(m.phone||'')} · ${esc(memberGradeLabel(m.grade))} · ${esc(st)} · ${esc(m.priority||'보통')}</p>
+        <p>${esc(m.phone||'')} · ${esc(memberGradeLabel(m.grade))} · ${esc(st)} · ${esc(m.priority||'보통')} · 🎯 ${esc(getMemberPreferredCount(m))}조합</p>
         <small class="member-owner-line">등록 관리자: <strong>${esc(registeredBy)}</strong>${m.created_at ? ' · 등록일 ' + esc(m.created_at) : ''}</small>
         <small>${esc(m.memo||'')}</small>
       </div>
-      <div class="member-actions"><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
+      <div class="member-actions"><span class="combo-count-badge">${esc(getMemberPreferredCount(m))}조합</span><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
     </div>`;
   }).join('');
   renderPagination('memberPager', source.length, memberPage, memberPageSize, 'setMemberPage', 'setMemberPageSize');
@@ -578,7 +594,7 @@ function renderMembers(list){
 function fillMemberSelect(list){
   const sel=$('genMember'); if(!sel) return;
   const prev=String(sel.value||'');
-  sel.innerHTML='<option value="">회원 선택 없음</option>'+list.map(m=>`<option value="${m.id}">${esc(m.name)}${m.phone? ' ('+esc(m.phone)+')':''}</option>`).join('');
+  sel.innerHTML='<option value="">회원 선택 없음</option>'+list.map(m=>`<option value="${m.id}">${esc(m.name)}${m.phone? ' ('+esc(m.phone)+')':''} · ${esc(getMemberPreferredCount(m))}조합</option>`).join('');
   if(prev && Array.from(sel.options).some(o=>String(o.value)===prev)) sel.value=prev;
 }
 
@@ -1121,8 +1137,9 @@ async function loadAdmin(){
 
 window.selectMember=function(id){
   const m=membersCache.find(x=>String(x.id)===String(id)); if(!m) return;
-  setValue('mId',m.id); setValue('mName',m.name); setValue('mPhone',m.phone); setValue('mGrade',memberGradeLabel(m.grade)); setValue('mStatus',m.status||'활성'); setValue('mPriority',m.priority||'보통'); setValue('mSource',m.source||'직접등록'); setValue('mMemo',m.memo||'');
+  setValue('mId',m.id); setValue('mName',m.name); setValue('mPhone',m.phone); setValue('mGrade',memberGradeLabel(m.grade)); setValue('mStatus',m.status||'활성'); setValue('mPriority',m.priority||'보통'); setValue('mPreferredCount',getMemberPreferredCount(m)); setValue('mSource',m.source||'직접등록'); setValue('mMemo',m.memo||'');
   if($('genMember')) $('genMember').value=id;
+  setGenCountValue(getMemberPreferredCount(m));
   refreshSmsPreview();
   toast(`${m.name} 회원을 선택했습니다.`);
 };
@@ -1134,7 +1151,7 @@ window.detailMember=safe(async function(id){
   const body=$('memberDetailPageBody');
   if(!body) return;
   if(title) title.textContent = `${m.name || '회원'} 상세`;
-  if(sub) sub.textContent = `${m.phone || '-'} / ${memberGradeLabel(m.grade)} / ${m.status || '활성'} / ${m.priority || '보통'}`;
+  if(sub) sub.textContent = `${m.phone || '-'} / ${memberGradeLabel(m.grade)} / ${m.status || '활성'} / ${m.priority || '보통'} / ${getMemberPreferredCount(m)}조합`;
   const summary = d.summary || {};
   const ranks = summary.rank_counts || {};
   const rankText = ['1등','2등','3등','4등','5등','낙첨'].filter(k=>ranks[k]).map(k=>`${k} ${ranks[k]}건`).join(' · ') || '확인 이력 없음';
@@ -1143,7 +1160,7 @@ window.detailMember=safe(async function(id){
       <div class="detail-card main-profile">
         <h3>${esc(m.name||'')}</h3>
         <p>${esc(m.phone||'-')}</p>
-        <div class="chip-row"><span class="chip">${esc(memberGradeLabel(m.grade))}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span></div>
+        <div class="chip-row"><span class="chip">${esc(memberGradeLabel(m.grade))}</span><span class="chip">${esc(m.status||'활성')}</span><span class="chip">${esc(m.priority||'보통')}</span><span class="chip">${esc(getMemberPreferredCount(m))}조합</span></div>
         <small>가입 ${esc(m.created_at||'-')} · 최근상담 ${esc(m.last_contact_at||'없음')}</small>
       </div>
       <div class="detail-card"><b>${summary.recommendations||0}</b><span>추천 이력</span></div>
@@ -1198,6 +1215,7 @@ function refreshSmsPreview(){
 
 async function generate(){
   const selectedMemberId=$('genMember')?.value||'';
+  applySelectedMemberPreferredCount();
   const next=await setNextDrawRound();
   try{ await loadStats(100); }catch(e){ console.warn('최신 통계 갱신 실패', e); }
   const defaultRound = Number(next?.next_round || next?.latest_round || 0) || undefined;
@@ -1250,11 +1268,11 @@ async function saveMember(){
 }
 async function addMember(){
   const id=$('mId')?.value;
-  const body={name:$('mName')?.value||'', phone:$('mPhone')?.value||'', grade:memberGradeLabel($('mGrade')?.value||'일반'), status:$('mStatus')?.value||'활성', priority:$('mPriority')?.value||'보통', source:$('mSource')?.value||'직접등록', memo:$('mMemo')?.value||''};
+  const body={name:$('mName')?.value||'', phone:$('mPhone')?.value||'', grade:memberGradeLabel($('mGrade')?.value||'일반'), status:$('mStatus')?.value||'활성', priority:$('mPriority')?.value||'보통', preferred_count:getMemberPreferredCount({preferred_count:$('mPreferredCount')?.value||10}), source:$('mSource')?.value||'직접등록', memo:$('mMemo')?.value||''};
   if(!body.name.trim()){ alert('회원 이름을 입력하세요.'); return; }
   if(id) await api('/api/members/'+id,{method:'PUT',body}); else await api('/api/members',{method:'POST',body});
   ['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,''));
-  setValue('mGrade','일반'); setValue('mStatus','활성'); setValue('mPriority','보통'); setValue('mSource','');
+  setValue('mGrade','일반'); setValue('mStatus','활성'); setValue('mPriority','보통'); setValue('mPreferredCount','10'); setValue('mSource','');
   await loadMembers(); await loadDashboard(); toast('회원 정보가 저장되었습니다.');
 }
 function autoTemplate(){
@@ -1844,7 +1862,7 @@ function bind(){
   $('generate')?.addEventListener('click',safe(generate));
   $('addMember')?.addEventListener('click',safe(addMember));
   $('saveMemberBtn')?.addEventListener('click',safe(saveMember));
-  $('clearMember')?.addEventListener('click',()=>['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,'')));
+  $('clearMember')?.addEventListener('click',()=>{ ['mId','mName','mPhone','mMemo'].forEach(x=>setValue(x,'')); setValue('mPreferredCount','10'); });
   $('memberDetailBack')?.addEventListener('click',()=>openPanel('members','회원 관리'));
   $('memberSearch')?.addEventListener('input',()=>scheduleMemberRefresh());
   $('memberSearch')?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(memberSearchTimer); saveMemberFilterState(); refreshMemberView(); } });
@@ -1852,7 +1870,7 @@ function bind(){
   $('memberGradeFilter')?.addEventListener('change',()=>{ saveMemberFilterState(); refreshMemberView(); });
   $('memberPriorityFilter')?.addEventListener('change',()=>{ saveMemberFilterState(); refreshMemberView(); });
   $('memberSort')?.addEventListener('change',()=>{ memberPage=1; saveMemberFilterState(); applyMemberFilters(); renderMembers(memberFilteredCache); });
-  $('genMember')?.addEventListener('change',refreshSmsPreview);
+  $('genMember')?.addEventListener('change',()=>{ applySelectedMemberPreferredCount(); refreshSmsPreview(); });
   $('saveTemplate')?.addEventListener('click',safe(saveTemplate));
   $('autoTemplate')?.addEventListener('click',autoTemplate);
   $('resetTemplate')?.addEventListener('click',resetTemplate);
