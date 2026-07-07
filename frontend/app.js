@@ -586,7 +586,7 @@ function renderMembers(list){
         <small class="member-owner-line">등록 관리자: <strong>${esc(registeredBy)}</strong>${m.created_at ? ' · 등록일 ' + esc(m.created_at) : ''}</small>
         <small>${esc(m.memo||'')}</small>
       </div>
-      <div class="member-actions"><button class="combo-count-badge combo-generate-copy" onclick="generateMemberAndCopy(${m.id}, this)" title="이 회원 조합수로 추천번호 생성 후 문자 자동 복사">${esc(getMemberPreferredCount(m))}조합</button><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
+      <div class="member-actions"><button class="combo-count-badge combo-generate-copy" onclick="generateMemberAndCopy(${m.id}, this)" title="이 회원 조합수로 추천번호 생성 후 문자 자동 복사">${esc(getMemberPreferredCount(m))}조합</button><button class="sms-save-copy-badge" onclick="generateMemberCopyAndSave(${m.id}, this)" title="추천번호 생성 후 문자 복사와 보낸문자 저장을 같이 실행">복사저장</button><button onclick="selectMember(${m.id})">선택</button><button onclick="detailMember(${m.id})">상세페이지</button><button onclick="quickMemberStatus(${m.id},'활성')">활성</button><button onclick="quickMemberStatus(${m.id},'정지')">정지</button><button onclick="quickMemberStatus(${m.id},'탈퇴')">탈퇴</button><button onclick="deleteMember(${m.id})">삭제</button></div>
     </div>`;
   }).join('');
   renderPagination('memberPager', source.length, memberPage, memberPageSize, 'setMemberPage', 'setMemberPageSize');
@@ -1163,6 +1163,25 @@ async function copyTextToClipboard(text){
   ta.remove();
 }
 
+async function saveCurrentSmsLog(){
+  const mid=$('genMember')?.value;
+  if(!mid){ throw new Error('회원을 선택해야 보낸문자를 저장할 수 있습니다.'); }
+  const member=getSelectedMember();
+  const text=($('smsPreview')?.value || currentSms || '').trim();
+  if(!text){ throw new Error('저장할 문자 내용이 없습니다.'); }
+  const body={
+    member_id:Number(mid),
+    member_name:member?.name||'',
+    phone:member?.phone||'',
+    round_no:Number(currentRound||0),
+    body:text,
+    combos:normalizeCombos(currentCombos),
+    send_now:false
+  };
+  try{ return await api('/api/sms_log',{method:'POST',body}); }
+  catch(e){ return await api('/api/sms',{method:'POST',body}); }
+}
+
 window.generateMemberAndCopy = safe(async function(id, btn){
   const m=membersCache.find(x=>String(x.id)===String(id));
   if(!m){ alert('회원을 찾을 수 없습니다.'); return; }
@@ -1181,6 +1200,30 @@ window.generateMemberAndCopy = safe(async function(id, btn){
     console.error(e);
     if(btn){ btn.textContent=oldText || `${getMemberPreferredCount(m)}조합`; btn.disabled=false; }
     alert('자동 생성/복사 실패: '+(e.message||e));
+  }
+});
+
+window.generateMemberCopyAndSave = safe(async function(id, btn){
+  const m=membersCache.find(x=>String(x.id)===String(id));
+  if(!m){ alert('회원을 찾을 수 없습니다.'); return; }
+  const oldText = btn?.textContent;
+  try{
+    if(btn){ btn.disabled=true; btn.textContent='생성중'; }
+    window.selectMember(id);
+    setGenCountValue(getMemberPreferredCount(m));
+    await generate();
+    const text = ($('smsPreview')?.value || currentSms || '').trim();
+    await copyTextToClipboard(text);
+    await saveCurrentSmsLog();
+    await Promise.all([loadDashboard(), loadMembers()]);
+    if($('genMember')) $('genMember').value=String(id);
+    toast(`${m.name} ${getMemberPreferredCount(m)}조합 문자 복사 + 보낸문자 저장 완료`);
+    if(btn) btn.textContent='저장완료';
+    setTimeout(()=>{ if(btn){ btn.textContent=oldText || '복사저장'; btn.disabled=false; } }, 1200);
+  }catch(e){
+    console.error(e);
+    if(btn){ btn.textContent=oldText || '복사저장'; btn.disabled=false; }
+    alert('자동 생성/복사/저장 실패: '+(e.message||e));
   }
 });
 window.detailMember=safe(async function(id){
@@ -1338,12 +1381,26 @@ async function saveTemplate(){
   toast('문구 템플릿을 저장했습니다.');
 }
 async function saveSmsLog(){
-  const mid=$('genMember')?.value; if(!mid){ alert('회원을 선택해야 문구 이력을 저장할 수 있습니다.'); return; }
-  const member=getSelectedMember();
-  const body={member_id:Number(mid), member_name:member?.name||'', phone:member?.phone||'', round_no:Number(currentRound||0), body:$('smsPreview')?.value||currentSms, combos:normalizeCombos(currentCombos)};
-  try{ await api('/api/sms_log',{method:'POST',body}); }
-  catch(e){ await api('/api/sms',{method:'POST',body}); }
-  toast('회원 안내 문구 이력을 저장했습니다.'); await loadDashboard();
+  try{
+    await saveCurrentSmsLog();
+    toast('보낸문자를 회원 이력에 저장했습니다.');
+    await loadDashboard();
+    await loadMembers();
+  }catch(e){
+    alert(e.message || '문자 이력 저장 중 오류가 발생했습니다.');
+  }
+}
+async function copyAndSaveSmsLog(){
+  try{
+    const text = ($('smsPreview')?.value || currentSms || '').trim();
+    await copyTextToClipboard(text);
+    await saveCurrentSmsLog();
+    toast('문자 복사 + 보낸문자 저장 완료');
+    await loadDashboard();
+    await loadMembers();
+  }catch(e){
+    alert(e.message || '문자 복사/저장 중 오류가 발생했습니다.');
+  }
 }
 
 
@@ -1920,7 +1977,8 @@ function bind(){
   $('genCount')?.addEventListener('change',saveWorkspaceState);
   $('genMode')?.addEventListener('change',saveWorkspaceState);
   $('copyNums')?.addEventListener('click',()=>{navigator.clipboard?.writeText(currentCombos.map((a,i)=>`${i+1}. ${a.join(', ')}`).join('\n')); toast('번호를 복사했습니다.');});
-  $('copySms')?.addEventListener('click',()=>{navigator.clipboard?.writeText($('smsPreview')?.value||currentSms); toast('회원 안내 문구를 복사했습니다.');});
+  $('copySms')?.addEventListener('click',async()=>{try{await copyTextToClipboard($('smsPreview')?.value||currentSms); toast('회원 안내 문구를 복사했습니다.');}catch(e){alert(e.message||'복사 실패');}});
+  $('copyAndSaveSmsLog')?.addEventListener('click',copyAndSaveSmsLog);
   $('sendSmsBtn')?.addEventListener('click',()=>{refreshSmsPreview(); scrollToMessagePanel(); $('smsPreview')?.focus();});
   $('saveSmsLog')?.addEventListener('click',safe(saveSmsLog));
   $('exportSmsCsvAll')?.addEventListener('click',()=>downloadSmsCsv('all'));

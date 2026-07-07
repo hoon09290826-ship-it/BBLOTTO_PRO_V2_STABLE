@@ -231,3 +231,22 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
 /* RC7-25: 회원목록 조합수 버튼 = 생성 + 자동복사 */
 .combo-generate-copy{cursor:pointer;min-width:70px;}
 .combo-generate-copy:disabled{opacity:.75;cursor:wait;}
+
+/* RC7-26: 문자 복사 후 보낸문자 저장 전용 버튼 */
+.sms-save-copy-badge{
+  border-color: rgba(255,215,93,.75) !important;
+  background: rgba(74,54,8,.72) !important;
+  color: #ffe27a !important;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.sms-save-copy-badge:hover,
+.combo-generate-copy:hover{
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+#copyAndSaveSmsLog.primary{
+  background: linear-gradient(135deg,#e0b93e,#8b6a13);
+  color:#111;
+  font-weight:900;
+}
