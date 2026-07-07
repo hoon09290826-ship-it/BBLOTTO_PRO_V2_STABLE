@@ -283,24 +283,7 @@ function getBestAiScore(){
 }
 function formatComboLines(combos){
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n)));
-  if(!normalized.length) return '추천번호 없음';
-  return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n');
-}
-function formatSmsGandaNumbers(combos){
-  // RC7-21: 문자간다 최종 수신 문자 기준, 한 줄에 한 조합만 나오도록 가장 단순한 점(.) 형식으로 고정
-  return formatComboLines(combos);
-}
-function normalizeSmsgandaPreviewText(text){
-  let t = normalizeSmsLineBreaks(text || '');
-  // 이전 RC 패치에서 저장된 슬래시(/) 구분 문구가 localStorage에 남아 있어도 자동 복구
-  t = t.replace(/\s*\/\s*(?=\d{1,2}[\.\)]\s*)/g, '\n');
-  // [추천번호] 바로 뒤에 번호가 붙으면 강제 줄바꿈
-  t = t.replace(/(\[추천번호\])\s*(?=\d{1,2}[\.\)]\s*)/g, '$1\n');
-  // 번호 앞에 줄바꿈이 없으면 보정
-  t = t.replace(/([^\n])\s+(?=\d{1,2}[\.\)]\s*\d)/g, '$1\n');
-  // 1) 형식은 1. 형식으로 통일
-  t = t.replace(/(^|\n)(\d{1,2})\)\s*/g, '$1$2. ');
-  return t.replace(/\n{3,}/g, '\n\n').trim();
+  return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n') || '추천번호 없음';
 }
 function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
@@ -315,8 +298,8 @@ function buildTemplateMessage(member, round, combos, analysis){
   const name = member?.name || '회원';
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
-  const numbers = formatSmsGandaNumbers(combos || currentCombos);
-  return normalizeSmsgandaPreviewText(tpl
+  const numbers = formatComboLines(combos || currentCombos);
+  return normalizeSmsLineBreaks(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회차}', String(round || currentRound || '-'))
     .replaceAll('{추천번호}', numbers)
@@ -1389,11 +1372,10 @@ function getBulkSmsTemplate(){
 
 
 // ===================== RC7-8 SMSGANDA SEGMENT CENTER =====================
-const BB_SMS_SEG_VERSION = 'RC7_21_FINAL_MMS_FORMAT';
 const BB_SMS_SEG_DEFAULTS = {
-  1: '안녕하세요 {회원명}님, BBLOTTO입니다.\n{회차}회차 추천번호 및 이번회차 분석입니다.',
-  2: '[이번회차 핵심 분석]\n{분석}',
-  3: '[추천번호]\n{추천번호}',
+  1: '안녕하세요 {회원명}님, BBLOTTO입니다.\n\n{회차}회차 추천번호 및 이번회차 분석입니다.',
+  2: '[이번회차 핵심 분석]\n\n{분석}',
+  3: '[추천번호]\n\n{추천번호}',
   4: '좋은 결과 있으시길 바랍니다.'
 };
 function getSmsSegment(n){
@@ -1408,12 +1390,6 @@ function setSmsSegment(n, value){
   localStorage.setItem('bb_sms_seg_'+n, v);
 }
 function initSmsSegments(){
-  // RC7-21: 이전 RC7-14~20에서 저장된 슬래시/공백형 문구가 브라우저 localStorage에 남아 있으면
-  // 새 패치를 덮어써도 계속 깨져 보입니다. 버전이 다르면 1회 자동 초기화합니다.
-  if(localStorage.getItem('bb_sms_seg_version') !== BB_SMS_SEG_VERSION){
-    [1,2,3,4].forEach(n=>localStorage.setItem('bb_sms_seg_'+n, BB_SMS_SEG_DEFAULTS[n]));
-    localStorage.setItem('bb_sms_seg_version', BB_SMS_SEG_VERSION);
-  }
   [1,2,3,4].forEach(n=>{
     const v = localStorage.getItem('bb_sms_seg_'+n) || BB_SMS_SEG_DEFAULTS[n];
     if($('smsSeg'+n)) $('smsSeg'+n).value = v;
@@ -1432,16 +1408,15 @@ function resetSmsSegment(n){
 }
 function resetAllSmsSegments(){
   [1,2,3,4].forEach(n=>setSmsSegment(n, BB_SMS_SEG_DEFAULTS[n]));
-  localStorage.setItem('bb_sms_seg_version', BB_SMS_SEG_VERSION);
   refreshSmsSegmentPreview();
   setText('smsExportInfo','문자간다 문구 전체를 기본값으로 복원했습니다.');
 }
 function buildSmsSegmentsForMember(member, round, combos, analysis){
   return {
-    seg1: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(1), member, round, combos, analysis)),
-    seg2: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(2), member, round, combos, analysis)),
-    seg3: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(3), member, round, combos, analysis)),
-    seg4: normalizeSmsgandaPreviewText(applyTemplate(getSmsSegment(4), member, round, combos, analysis))
+    seg1: applyTemplate(getSmsSegment(1), member, round, combos, analysis),
+    seg2: applyTemplate(getSmsSegment(2), member, round, combos, analysis),
+    seg3: applyTemplate(getSmsSegment(3), member, round, combos, analysis),
+    seg4: applyTemplate(getSmsSegment(4), member, round, combos, analysis)
   };
 }
 function buildSmsSegmentFullMessage(member, round, combos, analysis){
@@ -1468,8 +1443,8 @@ function applyTemplate(template, member, round, combos, analysis){
   const name = member?.name || member?.member_name || '회원';
   const today = new Date().toLocaleDateString('ko-KR');
   const analysisText = normalizeText(analysis || currentAnalysis).trim() || '분석 결과 없음';
-  const numbers = formatSmsGandaNumbers(combos || currentCombos);
-  return normalizeSmsgandaPreviewText(tpl
+  const numbers = formatComboLines(combos || currentCombos);
+  return normalizeSmsLineBreaks(tpl
     .replaceAll('{회원명}', name)
     .replaceAll('{회원이름}', name)
     .replaceAll('{이름}', name)
@@ -1524,10 +1499,12 @@ async function downloadSmsGandaXls(scope='all'){
   const rows = buildSmsExportRows(scope).map(r=>({
     name: String(r.name || '회원').trim(),
     phone: String(r.phone || '').replace(/[^0-9]/g, ''),
-    seg1: toSmsGandaCellBreaks(r.seg1 || ''),
-    seg2: toSmsGandaCellBreaks(r.seg2 || ''),
-    seg3: toSmsGandaCellBreaks(r.seg3 || ''),
-    seg4: toSmsGandaCellBreaks(r.seg4 || '')
+    // RC7-22: 문자간다 엑셀 치환값 내부 줄바꿈 제거 문제 때문에
+    // XLS는 이름/전화번호 주소록 전용으로만 사용합니다. 본문은 '문자내용 복사'로 입력창에 붙여넣습니다.
+    seg1: '',
+    seg2: '',
+    seg3: '',
+    seg4: ''
   })).filter(r=>r.name && r.phone);
   if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
   setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 중입니다...`);
@@ -1559,7 +1536,7 @@ async function downloadSmsGandaXls(scope='all'){
   a.click();
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
-  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 완료 · 샘플과 같은 Excel 97-2003 형식`);
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 주소록 XLS 생성 완료 · 먼저 문자내용 복사를 눌러 입력창에 붙여넣으세요.`);
   toast(`문자간다 실제 XLS ${rows.length}명 생성 완료`);
 }
 async function downloadSmsGandaTxt(scope='all'){
@@ -1602,16 +1579,37 @@ async function downloadSmsGandaTxt(scope='all'){
   setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 TXT 생성 완료 · ANSI/CP949, 이름,전화번호 형식`);
   toast(`문자간다 TXT ${rows.length}명 생성 완료`);
 }
+function buildSmsGandaPasteTemplate(){
+  // RC7-22: 문자간다는 엑셀 치환값([*1*]~[*4*]) 내부 줄바꿈을 제거합니다.
+  // 그래서 줄바꿈이 필요한 본문은 문자간다 입력창에 직접 붙여넣는 공통 템플릿으로 생성합니다.
+  // 이름만 문자간다 기본 치환값 [*이름*]을 사용하고, 추천번호/분석은 입력창 본문에 직접 넣습니다.
+  const round = String(currentRound || '-');
+  const combos = normalizeCombos(currentCombos);
+  const numbers = formatComboLines(combos);
+  const analysis = normalizeSmsLineBreaks(currentAnalysis || '').trim() || `${round}회차는 균형형 기준으로 최근 흐름과 누적 데이터를 함께 비교했습니다.
+끝수 반복과 연속수 과다 사용을 제한해 조합별 형태가 겹치지 않게 했습니다.
+본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.`;
+  return normalizeSmsLineBreaks([
+    '안녕하세요 [*이름*]님, BBLOTTO입니다.',
+    `${round}회차 추천번호 및 이번회차 분석입니다.`,
+    '',
+    '[이번회차 핵심 분석]',
+    analysis,
+    '',
+    '[추천번호]',
+    numbers,
+    '',
+    '',
+    '좋은 결과 있으시길 바랍니다.'
+  ].join('\n'));
+}
 function copySmsGandaMessage(){
   try{
-    const m = getSelectedMember() || (membersCache && membersCache[0]) || {name:'회원'};
-    const combos = (typeof rc71MemberCombos === 'function') ? rc71MemberCombos(m, 0, normalizeCombos(currentCombos).length || 10) : normalizeCombos(currentCombos);
-    const analysis = (typeof rc71MemberAnalysis === 'function') ? rc71MemberAnalysis(m, combos, 0) : (currentAnalysis || '');
-    const text = (typeof buildSmsSegmentFullMessage === 'function') ? buildSmsSegmentFullMessage(m, currentRound || '', combos, analysis) : buildBulkSmsMessage(m, currentRound || '', combos, analysis);
+    const text = buildSmsGandaPasteTemplate();
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); }
     else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-    setText('smsExportInfo', '문자간다 메시지 입력창에 붙여넣을 문자내용을 복사했습니다. TXT는 주소록 업로드용입니다.');
-    toast('문자내용 복사 완료');
+    setText('smsExportInfo', '문자간다 입력창에는 방금 복사한 본문을 그대로 붙여넣고, XLS는 주소록용으로만 업로드하세요. [*1*]~[*4*]는 사용하지 않습니다.');
+    toast('문자간다 붙여넣기용 본문 복사 완료');
   }catch(e){ console.error(e); alert('문자내용 복사 중 오류: '+(e.message||e)); }
 }
 async function bbDownloadSmsGandaXls(){ try{ await downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
