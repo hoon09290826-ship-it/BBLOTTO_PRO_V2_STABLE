@@ -296,8 +296,28 @@ function formatSmsGandaSpaceCombos(combos){
   if(!normalized.length) return '추천번호 없음';
   return normalized.map((c,i)=>`${i+1})${formatComboNumbersCompact(c)}`).join('\n');
 }
+function formatSmsGandaOneLineCombos(combos, start=0, end=null){
+  // RC7-18: 문자간다 엑셀 가져오기에서는 셀 내부 줄바꿈이 삭제됩니다.
+  // 그래서 셀 안에는 줄바꿈을 넣지 않고, 조합 사이를 / 로 구분합니다.
+  // 실제 줄바꿈은 문자간다 문자입력창에서 [*3*]와 [*4*] 사이에 직접 넣는 방식입니다.
+  const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
+  const part = normalized.slice(start, end ?? normalized.length);
+  if(!part.length) return '추천번호 없음';
+  return part.map((c,i)=>`${start+i+1})${formatComboNumbersCompact(c)}`).join(' / ');
+}
 function buildSmsGandaRecommendationSegment(combos){
-  return '[추천번호]\n' + formatSmsGandaSpaceCombos(combos);
+  return '[추천번호] ' + formatSmsGandaOneLineCombos(combos, 0, 5);
+}
+function buildSmsGandaRecommendationSegment2(combos){
+  const tail = formatSmsGandaOneLineCombos(combos, 5, 10);
+  return tail === '추천번호 없음' ? '좋은 결과 있으시길 바랍니다.' : tail + ' 좋은 결과 있으시길 바랍니다.';
+}
+function compactSmsGandaAnalysis(text){
+  return normalizeText(text || '')
+    .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    .split('\n').map(v=>v.trim()).filter(Boolean).join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 function normalizeSmsLineBreaks(text){
   return normalizeText(text || '').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n');
@@ -1427,13 +1447,17 @@ function resetAllSmsSegments(){
   setText('smsExportInfo','문자간다 문구 전체를 기본값으로 복원했습니다.');
 }
 function buildSmsSegmentsForMember(member, round, combos, analysis){
-  // RC7-13: 문자간다 [*3*]는 줄바꿈 대신 공백 정렬 전용 포맷으로 고정합니다.
-  // 문자간다에서 줄바꿈이 사라져도 번호가 붙지 않고 읽히도록 하기 위한 전용 처리입니다.
+  // RC7-18: 문자간다 엑셀 업로드는 셀 내부 줄바꿈을 삭제하므로
+  // 각 [*1*]~[*4*] 셀은 전부 '한 줄'로 저장합니다.
+  // 문자간다 입력창 템플릿에서 [*1*], [*2*], [*3*], [*4*] 사이에 직접 줄바꿈을 넣어 사용하세요.
+  const name = member?.name || '회원';
+  const roundText = String(round || currentRound || '-');
+  const analysisOneLine = compactSmsGandaAnalysis(analysis || currentAnalysis || '최근 흐름과 누적 데이터를 함께 비교해 회원별 조합을 선별했습니다. 본 추천은 통계 기반 참고자료이며 당첨을 보장하지 않습니다.');
   return {
-    seg1: applyTemplate(getSmsSegment(1), member, round, combos, analysis),
-    seg2: applyTemplate(getSmsSegment(2), member, round, combos, analysis),
+    seg1: `안녕하세요 ${name}님, BBLOTTO입니다. ${roundText}회차 추천번호 및 이번회차 분석입니다.`,
+    seg2: `[이번회차 핵심 분석] ${analysisOneLine}`,
     seg3: buildSmsGandaRecommendationSegment(combos || currentCombos),
-    seg4: applyTemplate(getSmsSegment(4), member, round, combos, analysis)
+    seg4: buildSmsGandaRecommendationSegment2(combos || currentCombos)
   };
 }
 function buildSmsSegmentFullMessage(member, round, combos, analysis){

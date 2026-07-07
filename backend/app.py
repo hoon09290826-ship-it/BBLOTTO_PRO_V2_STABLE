@@ -6636,13 +6636,15 @@ def _smsganda_cell_text(value):
     return text
 
 def _smsganda_recommendation_text(value):
-    # RC7-16: [*3*] 추천번호 전용. 직접 붙여넣기 테스트와 동일한 1줄 1조합 LF 저장 방식.
+    # RC7-18: 문자간다 엑셀 가져오기는 셀 내부 줄바꿈을 삭제하는 환경이 있어
+    # [*3*]/[*4*] 셀 값은 줄바꿈 없는 한 줄 텍스트로 고정합니다.
     text = _smsganda_cell_text(value)
     text = re.sub(r'\s*,\s*', ',', text)
     text = re.sub(r'(?m)^\s*(\d{1,2})\.\s*', r'\1)', text)
     text = re.sub(r'(?m)^\s*(\d{1,2})\)\s*', r'\1)', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+    text = text.replace('\r', ' ').replace('\n', ' ')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 @app.post('/api/export/smsganda_xls')
 def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
