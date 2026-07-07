@@ -6606,6 +6606,78 @@ def rc7_1_status(authorization: str|None = Header(default=None)):
 # ===================== /RC7-1 MEMBER PERSONALIZED AI ENGINE V2 =====================
 
 
+
+
+# ===================== RC7-3 SMSGANDA REAL XLS EXPORT =====================
+class SmsGandaRow(BaseModel):
+    name: str = ''
+    phone: str = ''
+
+class SmsGandaXlsReq(BaseModel):
+    rows: list[SmsGandaRow] = []
+    scope: str = 'all'
+    round_no: str | int | None = None
+
+def _smsganda_clean_phone(value):
+    return re.sub(r'[^0-9]', '', str(value or ''))
+
+def _safe_download_name(name):
+    return re.sub(r'[^0-9A-Za-z_\-가-힣]', '_', str(name or 'download'))[:120] or 'download'
+
+@app.post('/api/export/smsganda_xls')
+def export_smsganda_real_xls(req: SmsGandaXlsReq, authorization: str|None = Header(default=None)):
+    require_admin(authorization)
+    try:
+        import xlwt
+    except Exception as e:
+        raise HTTPException(status_code=500, detail='문자간다 XLS 생성 모듈(xlwt)이 설치되지 않았습니다. requirements.txt에 xlwt를 추가한 뒤 재배포하세요.') from e
+
+    cleaned=[]
+    seen=set()
+    for row in (req.rows or []):
+        name = str(row.name or '').strip()
+        phone = _smsganda_clean_phone(row.phone)
+        if not name or not phone:
+            continue
+        key=(name, phone)
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append((name, phone))
+    if not cleaned:
+        raise HTTPException(status_code=400, detail='엑셀로 만들 회원 이름/전화번호가 없습니다.')
+
+    # 문자간다 샘플 파일과 같은 Excel 97~2003 BIFF 계열(.xls)로 생성합니다.
+    wb = xlwt.Workbook(encoding='cp949')
+    ws = wb.add_sheet('Sheet1')
+    text_style = xlwt.XFStyle()
+    text_style.num_format_str = '@'
+    for idx, (name, phone) in enumerate(cleaned):
+        ws.write(idx, 0, name, text_style)
+        ws.write(idx, 1, phone, text_style)
+    ws.col(0).width = 18 * 256
+    ws.col(1).width = 18 * 256
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    scope_label = {'all':'전체회원','representative':'대표관리자회원','general':'일반관리자회원','selected':'선택회원'}.get(str(req.scope or 'all'), '회원')
+    round_part = f'{req.round_no}회차_' if req.round_no else ''
+    filename = _safe_download_name(f'BBLOTTO_{round_part}문자간다_주소록_{scope_label}.xls')
+    quoted = urllib.parse.quote(filename)
+    return StreamingResponse(
+        bio,
+        media_type='application/vnd.ms-excel',
+        headers={'Content-Disposition': f"attachment; filename={filename}; filename*=UTF-8''{quoted}"}
+    )
+
+@app.get('/api/rc7-3/status')
+def rc7_3_status(authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    return {'ok': True, 'version': 'RC7-3 SMSGANDA REAL XLS', 'engine': DB_ENGINE, 'summary': '문자간다 샘플 기준 Excel 97-2003 BIFF .xls 주소록 생성', 'admin': admin.get('username')}
+# ===================== /RC7-3 SMSGANDA REAL XLS EXPORT =====================
+
+
 # ===================== RC7-2 SMSGANDA XLS EXPORT =====================
 @app.get('/api/rc7-2/status')
 def rc7_2_status(authorization: str|None = Header(default=None)):

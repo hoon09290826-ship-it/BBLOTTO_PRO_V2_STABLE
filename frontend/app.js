@@ -1362,7 +1362,7 @@ function escapeHtml(value){
     .replace(/"/g,'&quot;')
     .replace(/'/g,'&#39;');
 }
-function downloadSmsGandaXls(scope='all'){
+async function downloadSmsGandaXls(scope='all'){
   const members = smsExportMembers(scope);
   if(!members.length){ alert(scope === 'selected' ? '선택된 회원이 없거나 연락처가 없습니다.' : '문자간다 업로드용 회원 연락처가 없습니다.'); return; }
   const rows = members.map(m=>({
@@ -1370,12 +1370,31 @@ function downloadSmsGandaXls(scope='all'){
     phone: String(m.phone || '').replace(/[^0-9]/g, '')
   })).filter(r=>r.name && r.phone);
   if(!rows.length){ alert('이름과 전화번호가 있는 회원이 없습니다.'); return; }
-  const tableRows = rows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.phone)}</td></tr>`).join('');
-  const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><tbody>${tableRows}</tbody></table></body></html>`;
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 중입니다...`);
+  const r = await fetch('/api/export/smsganda_xls', {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({rows, scope, round_no: currentRound || ''})
+  });
+  if(r.status === 401){ localStorage.removeItem('bb_v34_token'); location.href='/'; return; }
+  if(!r.ok){
+    let msg = '문자간다 XLS 생성 실패';
+    try{ const j = await r.json(); msg = j.detail || j.error || j.message || msg; }catch(e){ try{ msg = await r.text(); }catch(_){} }
+    throw new Error(msg);
+  }
+  const blob = await r.blob();
   const roundPart = currentRound ? `${currentRound}회차_` : '';
-  downloadTextFile(`BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.xls`, html, 'application/vnd.ms-excel;charset=utf-8;');
-  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 XLS 생성 완료 · 문자간다 안내 기준: A열 이름, B열 전화번호`);
-  toast(`문자간다 XLS ${rows.length}명 생성 완료`);
+  const filename = `BBLOTTO_${roundPart}문자간다_주소록_${getSmsScopeLabel(scope)}.xls`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  setText('smsExportInfo', `${getSmsScopeLabel(scope)} ${rows.length}명 문자간다 실제 XLS 생성 완료 · 샘플과 같은 Excel 97-2003 형식`);
+  toast(`문자간다 실제 XLS ${rows.length}명 생성 완료`);
 }
 function downloadSmsGandaTxt(scope='all'){
   const members = smsExportMembers(scope);
@@ -1398,9 +1417,9 @@ function copySmsGandaMessage(){
     toast('문자내용 복사 완료');
   }catch(e){ console.error(e); alert('문자내용 복사 중 오류: '+(e.message||e)); }
 }
-function bbDownloadSmsGandaXls(){ try{ downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
-function bbDownloadSmsGandaXlsAll(){ try{ downloadSmsGandaXls('all'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
-function bbDownloadSmsGandaXlsSelected(){ try{ downloadSmsGandaXls('selected'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+async function bbDownloadSmsGandaXls(){ try{ await downloadSmsGandaXls(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+async function bbDownloadSmsGandaXlsAll(){ try{ await downloadSmsGandaXls('all'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
+async function bbDownloadSmsGandaXlsSelected(){ try{ await downloadSmsGandaXls('selected'); }catch(e){ console.error(e); alert('문자간다 XLS 생성 중 오류: '+(e.message||e)); } }
 function bbDownloadSmsGandaTxt(){ try{ downloadSmsGandaTxt(getSmsScopeValue()); }catch(e){ console.error(e); alert('문자간다 TXT 생성 중 오류: '+(e.message||e)); } }
 window.bbDownloadSmsGandaXls = bbDownloadSmsGandaXls;
 window.bbDownloadSmsGandaXlsAll = bbDownloadSmsGandaXlsAll;
