@@ -285,15 +285,15 @@ function formatComboLines(combos){
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n)));
   return normalized.map((c,i)=>`${i+1}. ${c.join(', ')}`).join('\n') || '추천번호 없음';
 }
-function formatComboNumbersPadded(combo){
-  return (combo || []).slice(0,6).map(n=>String(Number(n)).padStart(2,' ')).join(', ');
+function formatComboNumbersCompact(combo){
+  return (combo || []).slice(0,6).map(n=>String(Number(n))).join(',');
 }
 function formatSmsGandaSpaceCombos(combos){
-  // RC7-13: 문자간다는 셀 내부 줄바꿈을 없애는 경우가 있어 공백 정렬 방식으로 고정합니다.
+  // RC7-14: 문자간다 미리보기 폭에서 10번 조합이 꺾이지 않도록 숫자 사이 공백을 제거합니다.
   const normalized = normalizeCombos(combos).map(c=>c.slice(0,6).map(Number).filter(n=>Number.isFinite(n))).filter(c=>c.length===6);
   if(!normalized.length) return '추천번호 없음';
-  const gap = '              '; // 문자간다 업로드 후에도 유지되는 안전 여백
-  return normalized.map((c,i)=>`${String(i+1).padStart(2,' ')}. ${formatComboNumbersPadded(c)}`).join(gap);
+  const gap = '              '; // 조합 사이 안전 여백
+  return normalized.map((c,i)=>`${i+1}. ${formatComboNumbersCompact(c)}`).join(gap);
 }
 function buildSmsGandaRecommendationSegment(combos){
   return '[추천번호]' + '                            ' + formatSmsGandaSpaceCombos(combos);

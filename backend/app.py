@@ -6635,9 +6635,11 @@ def _smsganda_cell_text(value):
     return text.replace('\n', '\r\n')
 
 def _smsganda_space_text(value):
-    # RC7-13: [*3*] 추천번호 전용. 문자간다에서 줄바꿈이 지워져 번호가 붙는 현상을 막기 위해
-    # 줄바꿈을 넉넉한 공백으로 바꿔 저장한다. 이미 들어간 공백은 보존한다.
+    # RC7-14: [*3*] 추천번호 전용. 문자간다 미리보기 폭이 좁아 10번 조합이 줄바꿈되는 문제를 막기 위해
+    # 번호 사이 공백은 줄이고, 조합 사이 여백만 넉넉하게 유지한다.
     text = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\\n', '\n')
+    text = re.sub(r'\s*,\s*', ',', text)                 # 12, 17 -> 12,17
+    text = re.sub(r'(?m)^\s*(\d{1,2})\.\s*', r'\1. ', text)  # 앞 들여쓰기 제거
     text = re.sub(r'\n+', '              ', text)
     text = re.sub(r'(?<=\])(?=\d+\.)', '                            ', text)
     text = re.sub(r'(?<=[0-9])(?=\d{1,2}\.\s)', '              ', text)
