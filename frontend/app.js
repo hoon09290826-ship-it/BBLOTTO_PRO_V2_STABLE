@@ -173,8 +173,15 @@ function memberGradeLabel(v){
 }
 function numberListText(arr){ return (arr||[]).map(x=>Array.isArray(x)?x.join(', '):String(x)).join('\n'); }
 function ballClass(n){ n=Number(n); if(n<=10)return'b1'; if(n<=20)return'b2'; if(n<=30)return'b3'; if(n<=40)return'b4'; return'b5'; }
-function gradeLabel(d){ const s=Number(d?.score ?? d?.vip_score ?? d?.ai_score ?? 0); return d?.grade || (s>=94?'VIP':(s>=89?'PREMIUM':'STANDARD')); }
-function starLabel(d){ const s=Number(d?.score ?? d?.vip_score ?? d?.ai_score ?? 0); return d?.star || (s>=95?'★★★★★':(s>=90?'★★★★☆':(s>=85?'★★★★':'★★★☆'))); }
+function gradeLabel(d){
+  const g = memberGradeLabel(d?.member_grade || d?.grade || '일반');
+  return g === '1등' ? '🥇 1등' : (g === '2등' ? '🥈 2등' : '⭐ 일반');
+}
+function engineLabel(d){
+  const g = memberGradeLabel(d?.member_grade || d?.grade || '일반');
+  return d?.engine_label || (g === '1등' ? 'AI MASTER' : (g === '2등' ? 'AI PREMIUM' : 'AI BASIC'));
+}
+function starLabel(d){ const s=Number(d?.score ?? d?.vip_score ?? d?.ai_score ?? 0); return s>=97?'★★★★★':(s>=94?'★★★★☆':'★★★★'); }
 function top3FromDetails(sets, details=[]){ return (sets||[]).map((nums,i)=>({nums, detail:details[i]||{}, idx:i+1})).sort((a,b)=>Number(b.detail.score||0)-Number(a.detail.score||0)).slice(0,3); }
 function parseNumsInput(v){ return String(v||'').match(/\d+/g)?.map(Number).filter(n=>n>=1&&n<=45) || []; }
 function getSelectedMember(){ const id=String($('genMember')?.value||''); return membersCache.find(m=>String(m.id)===id) || null; }
@@ -341,7 +348,7 @@ function renderCombos(sets, details=[]){
   const topHtml = `<div class="top3-panel rc38-top3"><h4>TOP 3 우선 추천 <small>AI Engine V1.0</small></h4><div class="top3-grid">${top3.map(t=>{
     const d=t.detail||{}; const score=Number(d.score ?? d.vip_score ?? d.ai_score ?? 0);
     const nums=(t.nums||[]).map(n=>`<span class="mini-ball ${ballClass(n)}">${n}</span>`).join('');
-    return `<div class="top3-card"><b>${t.idx}조합</b><div class="mini-nums">${nums}</div><span>${gradeLabel(d)}</span><strong>${score?score.toFixed(1):'-'}점</strong><em>${starLabel(d)}</em></div>`;
+    return `<div class="top3-card"><b>${t.idx}조합</b><div class="mini-nums">${nums}</div><span>${gradeLabel(d)} · ${engineLabel(d)}</span><strong>${score?score.toFixed(1):'-'}점</strong><em>${starLabel(d)}</em></div>`;
   }).join('')}</div></div>`;
   const cards = sets.map((arr,i)=>{
     const d = details[i] || {};
@@ -351,7 +358,7 @@ function renderCombos(sets, details=[]){
     const even = d.even ?? (6-odd);
     const zones = d.zones || [arr.filter(n=>n<=15).length, arr.filter(n=>n>=16&&n<=30).length, arr.filter(n=>n>=31).length];
     const tags = d.tags || d.reasons || [];
-    const grade = gradeLabel(d);
+    const grade = `${gradeLabel(d)} · ${engineLabel(d)}`;
     const star = starLabel(d);
     return `<div class="combo-card v40-card ${i<3?'top-combo':''}">
       <div class="idx"><span>${i+1}조합</span><em>${grade} · ${score!=='' ? `${Number(score).toFixed(1)}점` : '점수 대기'}</em></div>
@@ -443,12 +450,15 @@ function renderEngine(engine, details=[]){
   const filter = engine?.filter_count ?? engine?.passed_count ?? details.length;
   const top = scores.length ? Math.max(...scores).toFixed(1) : '';
   const min = scores.length ? Math.min(...scores).toFixed(1) : (engine?.min_score ?? '');
+  const gradeEngine = engine?.engine_label || (details[0] ? engineLabel(details[0]) : 'AI BASIC');
+  const memberGrade = engine?.member_grade ? memberGradeLabel(engine.member_grade) : (details[0] ? memberGradeLabel(details[0].member_grade || details[0].grade) : '일반');
   const v2 = engine?.v2_pipeline_report || engine?.v10_pipeline_report || {};
   const pipeline = engine?.rc38_report?.quality_message || v2.pipeline || '후보 생성 → 필터 → 중복/분산 보정 → 최종선별';
   const stage1 = v2.stage1_candidates ?? candidate ?? '-';
   const stage2 = v2.stage2_top500 ?? v2.stage2_filters ?? '-';
   const stage3 = v2.stage3_top100 ?? v2.stage3_portfolio ?? '-';
   eb.innerHTML = `<div class="engine-grid">
+    <span><b>${gradeEngine}</b><small>${memberGrade} 엔진</small></span>
     <span><b>${avg || '-'}</b><small>평균 AI점수</small></span>
     <span><b>${top || '-'}</b><small>최고 점수</small></span>
     <span><b>${min || '-'}</b><small>최저 점수</small></span>
@@ -627,7 +637,7 @@ async function loadRc44Dashboard(){
   setText('smsCount', k.sms_today ?? 0);
   setText('rc44TodayRec', k.recommendations_today ?? 0);
   setText('rc44TodayLogin', k.login_today ?? 0);
-  const sub=$('rc44AdminSub'); if(sub) sub.textContent=`활성 ${k.active_members||0}명 · VIP/프리미엄 ${k.vip_members||0}명 · 우선관리 ${k.priority_members||0}명 · 총 당첨금 ${rc44Money(k.total_prize||0)}`;
+  const sub=$('rc44AdminSub'); if(sub) sub.textContent=`활성 ${k.active_members||0}명 · 1등/2등 ${k.vip_members||0}명 · 우선관리 ${k.priority_members||0}명 · 총 당첨금 ${rc44Money(k.total_prize||0)}`;
   const alerts=$('rc44Alerts'); if(alerts) alerts.innerHTML=(d.alerts||[]).map(a=>`<div class="rc44-alert ${esc(a.type||'')}">${esc(a.message||'')}</div>`).join('');
   const ops=$('rc44Ops'); if(ops) ops.innerHTML=`<div class="rc44-mini-grid"><div class="rc44-mini"><b>${k.activity_today||0}</b><span>오늘 활동</span></div><div class="rc44-mini"><b>${k.wins_today||0}</b><span>오늘 적중</span></div><div class="rc44-mini"><b>${k.max_ai_score||0}</b><span>최고 AI점수</span></div></div>` + rc44Rows((d.recent_members||[]).map(m=>({title:m.name, sub:`${m.grade||'일반'} · ${m.status||'활성'} · ${m.priority||'보통'}`, value:m.created_at||''})), '최근 가입 회원이 없습니다.');
   const recent=$('recentRecs'); if(recent) recent.innerHTML=rc44Rows((d.recent_recommendations||[]).map(r=>({title:`${r.round_no||'-'}회 · ${r.member_name||'회원'}`, sub:`${r.mode||'balanced'} · ${r.count||0}조합 · ${r.created_at||''}`, value:`AI ${Number(r.avg_score||0).toFixed(1)}`})), '최근 생성 이력이 없습니다.');

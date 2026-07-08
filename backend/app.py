@@ -1194,9 +1194,9 @@ def build_sms(member_name, round_no, combos, analysis, details):
 def rc37_grade(score):
     try: s=float(score or 0)
     except Exception: s=0
-    if s >= 94: return 'VIP'
-    if s >= 89: return 'PREMIUM'
-    return 'STANDARD'
+    if s >= 97: return '1등'
+    if s >= 94: return '2등'
+    return '일반'
 
 def rc37_star(score):
     try: s=float(score or 0)
@@ -2192,7 +2192,7 @@ def dashboard_summary(authorization: str|None = Header(default=None)):
     with con() as c:
         members=c.execute('SELECT COUNT(*) c FROM members').fetchone()['c']
         active_members=c.execute('SELECT COUNT(*) c FROM members WHERE COALESCE(status,"활성")="활성"').fetchone()['c']
-        vip_members=c.execute('SELECT COUNT(*) c FROM members WHERE grade IN ("VIP","다이아")').fetchone()['c']
+        vip_members=c.execute('SELECT COUNT(*) c FROM members WHERE grade IN ("1등","2등","VIP","다이아","프리미엄")').fetchone()['c']
         high_priority=c.execute('SELECT COUNT(*) c FROM members WHERE COALESCE(priority,"보통") IN ("높음","최우선")').fetchone()['c']
         recs=c.execute('SELECT COUNT(*) c FROM recommendations').fetchone()['c']
         sms=c.execute('SELECT COUNT(*) c FROM sms_logs').fetchone()['c']
@@ -2674,9 +2674,10 @@ def generate(req:GenerateReq, request:Request, authorization: str|None = Header(
     analysis=clean_template_text(build_analysis_text(safe_round, st, safe_mode, req.fixed, excluded_value, details))
     sms=clean_template_text(build_sms(member_name, safe_round, combos, analysis, details))
     engine=_engine_summary(details, st)
-    engine['phase']='RC4-5'
+    engine['phase']='RC7-29'
     engine['member_grade']=member_grade
     engine['grade_strength']=rc45_grade_strength_text(member_grade)
+    engine['engine_label']=_rc729_engine_name(member_grade)
     engine['rc38_report']=rc38_generation_report(combos, details, safe_round, safe_mode)
     engine['top3']=rc37_top3(combos, details)
     engine['quality_guide']=f'{member_grade} 관리 기준 · 최근 흐름과 누적 통계를 반영한 맞춤 추천'
@@ -4590,7 +4591,7 @@ def rc44_admin_dashboard(authorization: str|None = Header(default=None)):
         rec_scope_where = (' WHERE ' + scope_sql) if scope_sql else ''
         total_members = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM members' + mem_where, scope_args)
         active_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(status,'활성')='활성'", scope_args)
-        vip_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(grade,'일반') IN ('VIP','다이아','프리미엄')", scope_args)
+        vip_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(grade,'일반') IN ('1등','2등','VIP','다이아','프리미엄')", scope_args)
         priority_members = _rc44_safe_count(c, "SELECT COUNT(*) c FROM members" + (mem_where + " AND " if mem_where else " WHERE ") + "COALESCE(priority,'보통') IN ('높음','최우선')", scope_args)
         rec_total = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations r' + rec_join + rec_scope_where, scope_args)
         rec_today = _rc44_safe_count(c, 'SELECT COUNT(*) c FROM recommendations r' + rec_join + ' WHERE r.created_at LIKE ?' + rec_scope, (today, *scope_args))
@@ -6238,7 +6239,7 @@ def build_analysis_text(round_no, st, mode, fixed, excluded, details=None):
 
 # ===================== RC5-5 RECOMMEND ENGINE UPGRADE =====================
 # 추천번호 생성 품질 강화: 등급별 후보 강도, 최근 추천 중복 방지, 조합별 다양성 강화.
-RC55_ENGINE_VERSION = 'RC5-6_FAST_RECOMMEND_ENGINE'
+RC55_ENGINE_VERSION = 'RC7-29_GRADE_TIER_ENGINE'
 
 def _rc55_recent_recommendation_combos(member_id=None, limit=180):
     """최근 생성 이력에서 추천 조합을 가져와 동일/유사 조합 반복을 줄입니다."""
@@ -6299,32 +6300,67 @@ def _rc55_combo_quality_bonus(combo, st, ext, usage=None, member_grade='일반')
         bonus -= sum(max(0, usage.get(n, 0) - 1) * 0.18 for n in nums)
     g = rc45_grade_label(member_grade)
     if g == '1등':
-        bonus += 0.9
+        bonus += 1.8
     elif g == '2등':
-        bonus += 0.45
+        bonus += 0.9
     return bonus
 
+
+def _rc729_engine_name(grade='일반'):
+    g = rc45_grade_label(grade)
+    if g == '1등':
+        return 'AI MASTER'
+    if g == '2등':
+        return 'AI PREMIUM'
+    return 'AI BASIC'
+
+def _rc729_grade_score(base_score, grade='일반'):
+    """RC7-29: 등급별 점수 구간을 분리합니다.
+    일반은 90~94점대, 2등은 94~97점대, 1등은 97~99점대로 표시해
+    화면에서 등급별 엔진 차이가 확실히 보이도록 합니다.
+    """
+    try:
+        base = float(base_score or 0)
+    except Exception:
+        base = 85.0
+    # 기존 엔진 점수를 0~1 값으로 정규화하여 등급 구간 안에서 상대 품질을 유지
+    norm = max(0.0, min(1.0, (base - 70.0) / 29.7))
+    g = rc45_grade_label(grade)
+    if g == '1등':
+        lo, hi = 97.0, 99.2
+    elif g == '2등':
+        lo, hi = 94.0, 96.8
+    else:
+        lo, hi = 90.0, 93.8
+    return round(lo + (hi - lo) * norm, 1)
+
+def _rc729_grade_tags(grade='일반'):
+    g = rc45_grade_label(grade)
+    if g == '1등':
+        return ['1등 전용', 'AI MASTER', '상위 후보 선별']
+    if g == '2등':
+        return ['2등 전용', 'AI PREMIUM', '강화 후보 선별']
+    return ['일반 전용', 'AI BASIC', '기본 균형 선별']
+
 def _rc55_grade_params(grade='일반'):
-    # RC5-6 FAST: 후보군을 수천~만개까지 무조건 쌓던 방식에서
-    # 화면 응답 속도를 우선하는 선별 후보 방식으로 낮췄습니다.
-    # 품질은 등급별 가중치/포트폴리오 재정렬로 유지하고 DB/통계 재계산은 1회만 사용합니다.
+    # RC7-29: 1등/2등/일반 3단계만 사용하고 등급별 후보 선별 강도를 분리합니다.
     g = rc45_grade_label(grade)
     if g == '1등':
         return {
-            'base': 1800, 'mult': 180, 'tries': 12,
+            'base': 2200, 'mult': 220, 'tries': 14,
             'first': (2, 1, 3, 1), 'second': (3, 1, 3, 2), 'third': (4, 2, 3, 3),
-            'history_overlap': 4, 'hot_boost': 2.4, 'overdue_boost': 1.6, 'mid_boost': 0.9,
+            'history_overlap': 4, 'hot_boost': 3.2, 'overdue_boost': 2.15, 'mid_boost': 1.25,
         }
     if g == '2등':
         return {
-            'base': 1400, 'mult': 145, 'tries': 10,
+            'base': 1650, 'mult': 165, 'tries': 11,
             'first': (3, 1, 3, 1), 'second': (4, 2, 3, 2), 'third': (5, 2, 4, 3),
-            'history_overlap': 4, 'hot_boost': 1.8, 'overdue_boost': 1.25, 'mid_boost': 0.6,
+            'history_overlap': 4, 'hot_boost': 2.25, 'overdue_boost': 1.55, 'mid_boost': 0.8,
         }
     return {
         'base': 1000, 'mult': 120, 'tries': 9,
         'first': (4, 2, 4, 2), 'second': (5, 2, 4, 3), 'third': (6, 3, 4, 4),
-        'history_overlap': 5, 'hot_boost': 1.25, 'overdue_boost': 0.9, 'mid_boost': 0.35,
+        'history_overlap': 5, 'hot_boost': 1.15, 'overdue_boost': 0.75, 'mid_boost': 0.25,
     }
 
 def make_premium_combos(count=10, fixed='', excluded='', mode='balanced', member_grade='일반', member_id=None):
@@ -6479,15 +6515,17 @@ def make_premium_combos(count=10, fixed='', excluded='', mode='balanced', member
     # 실제 최종 점수도 RC5-6 빠른 엔진 기준으로 재보정
     for d in details:
         nums = d.get('numbers') or []
-        score = float(d.get('score') or 0) + _rc55_combo_quality_bonus(nums, st, ext, recent_usage, member_grade)
-        score = round(max(70.0, min(99.7, score)), 1)
+        raw_score = float(d.get('score') or 0) + _rc55_combo_quality_bonus(nums, st, ext, recent_usage, member_grade)
+        score = _rc729_grade_score(raw_score, member_grade)
+        d['raw_score'] = round(max(70.0, min(99.7, raw_score)), 1)
         d['score'] = d['ai_score'] = d['vip_score'] = score
         d['member_grade'] = member_grade
         d['grade_strength'] = rc45_grade_strength_text(member_grade)
         d['engine_version'] = RC55_ENGINE_VERSION
+        d['engine_label'] = _rc729_engine_name(member_grade)
         d['grade'] = '1등' if member_grade == '1등' else '2등' if member_grade == '2등' else '일반'
-        tags = [t for t in (d.get('tags') or []) if not str(t).startswith('RC')]
-        for tag in ['최근 추천 중복 제한', '구간·끝수 분산', '조합 간 유사도 제한']:
+        tags = [t for t in (d.get('tags') or []) if not str(t).startswith('RC') and str(t) not in ('VIP','PREMIUM','STANDARD')]
+        for tag in _rc729_grade_tags(member_grade) + ['최근 추천 중복 제한', '구간·끝수 분산', '조합 간 유사도 제한']:
             if tag not in tags:
                 tags.append(tag)
         d['tags'] = tags[:6]
@@ -6517,8 +6555,9 @@ def _engine_summary(details, st):
     return {
         'version': RC55_ENGINE_VERSION,
         'engine_version': RC55_ENGINE_VERSION,
-        'phase': 'RC5-6',
+        'phase': 'RC7-29',
         'member_grade': grade,
+        'engine_label': _rc729_engine_name(grade),
         'grade_strength': rc45_grade_strength_text(grade),
         'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
         'max_score': round(max(scores), 1) if scores else 0,
@@ -6527,7 +6566,7 @@ def _engine_summary(details, st):
         'selected_count': len(details or []),
         'latest_round': st.get('latest_round') or 0,
         'rc55_report': {
-            'grade_policy': '1등/2등/일반 등급별 후보군과 선별 강도 차등 · 빠른 후보 선별',
+            'grade_policy': '1등/2등/일반 3단계 전용 · 일반 90~94점대 / 2등 94~97점대 / 1등 97~99점대 구간 분리',
             'portfolio': st.get('rc42_portfolio') or {},
             'summary': '최근 추천 이력과 유사한 조합을 줄이고 분산형 후보를 우선 선별했습니다.'
         },
