@@ -250,3 +250,24 @@ button{background:#151515;border:1px solid rgba(212,175,55,.35);border-radius:10
   color:#111;
   font-weight:900;
 }
+
+
+/* RC7-28: 회원 상세 문구 이력 삭제 버튼 */
+.detail-history.sms-history summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.detail-history.sms-history summary span{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.sms-delete-btn{
+  padding:7px 10px;
+  border-radius:8px;
+  font-size:12px;
+  flex:0 0 auto;
+}

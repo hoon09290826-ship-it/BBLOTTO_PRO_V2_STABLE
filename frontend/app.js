@@ -903,12 +903,16 @@ function renderNoteCards(items){
   if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">상담 이력이 없습니다.</div>';
   return items.slice(0,30).map(r=>`<div class="note-card"><div><b>${esc(r.note_type||'상담')}</b><small>${esc(r.created_at||'')} · ${esc(r.created_by_name||'관리자')}</small></div>${formatLongText(r.note||'', 700)}</div>`).join('');
 }
-function renderHistoryCards(items, type){
+function renderHistoryCards(items, type, memberId){
   if(!Array.isArray(items) || !items.length) return '<div class="empty-detail">이력이 없습니다.</div>';
   return items.slice(0, 30).map((r)=>{
     if(type==='sms'){
-      return `<details class="detail-history" open>
-        <summary><b>${esc(r.round_no || '-')}회 문구</b><small>${esc(r.created_at || '')}</small></summary>
+      const mid = memberId || r.member_id || '';
+      return `<details class="detail-history sms-history" open>
+        <summary>
+          <span><b>${esc(r.round_no || '-')}회 문구</b><small>${esc(r.created_at || '')}</small></span>
+          <button class="danger small sms-delete-btn" onclick="event.preventDefault();event.stopPropagation();deleteSmsLog(${Number(r.id)||0}, ${Number(mid)||0})">삭제</button>
+        </summary>
         ${formatLongText(r.body || r.message || r.content || '', 900)}
       </details>`;
     }
@@ -1255,7 +1259,7 @@ window.detailMember=safe(async function(id){
     <div class="detail-section rc43-summary"><h4>적중 요약</h4><p>${esc(rankText)}</p><p>누적 당첨금 ${formatMoney(summary.total_prize||0)} · 누적 구매금 ${formatMoney(summary.total_cost||0)} · ROI ${esc(summary.roi||0)}%</p></div>
     <div class="detail-section"><h4>회원 메모</h4><textarea id="memberMemoEdit" class="detail-edit-textarea">${esc(m.memo||'')}</textarea><div class="btnrow"><button onclick="saveMemberMemo(${m.id})" class="primary">메모 저장</button></div></div>
     <div class="detail-section"><h4>상담 이력 추가</h4><div class="note-write"><select id="memberNoteType"><option>상담</option><option>결제</option><option>추천안내</option><option>당첨확인</option><option>기타</option></select><textarea id="memberNoteText" placeholder="상담/안내 내용을 입력하세요."></textarea><button onclick="saveMemberNote(${m.id})" class="primary">이력 추가</button></div>${renderNoteCards(d.notes)}</div>
-    <div class="detail-section"><h4>문구 이력</h4>${renderHistoryCards(d.sms_logs,'sms')}</div>
+    <div class="detail-section"><h4>문구 이력</h4>${renderHistoryCards(d.sms_logs,'sms', m.id)}</div>
     <div class="detail-section rc43-winning"><h4>당첨 이력</h4>${renderWinningHistorySummary(d.winning_checks)}</div>
   `;
   const selectBtn=$('memberDetailSelect');
@@ -1273,6 +1277,15 @@ window.saveMemberNote=safe(async function(id){
   toast('상담 이력을 추가했습니다.');
   await detailMember(id);
   await loadMembers();
+});
+window.deleteSmsLog=safe(async function(smsId, memberId){
+  if(!smsId) return alert('삭제할 문구 이력을 찾지 못했습니다.');
+  if(!confirm('이 문구 이력을 삭제할까요?')) return;
+  await api('/api/sms/'+smsId,{method:'DELETE'});
+  toast('문구 이력을 삭제했습니다.');
+  if(memberId) await detailMember(memberId);
+  await loadMembers();
+  await loadDashboard();
 });
 window.deleteMember=safe(async function(id){ if(!confirm('삭제할까요?')) return; await api('/api/members/'+id,{method:'DELETE'}); await loadMembers(); await loadDashboard(); });
 window.downloadApi=function(path){ const t=token(); location.href=path+(path.includes('?')?'&':'?')+'token='+encodeURIComponent(t); };

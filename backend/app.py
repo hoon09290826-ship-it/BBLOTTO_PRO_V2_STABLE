@@ -2517,7 +2517,7 @@ def member_detail(member_id:int, authorization: str|None = Header(default=None))
         assert_member_access(c, admin, member_id)
         m=c.execute('SELECT * FROM members WHERE id=?',(member_id,)).fetchone()
         recs=c.execute('SELECT id,round_no,mode,count,numbers,analysis,avg_score,created_at FROM recommendations WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
-        sms=c.execute('SELECT id,round_no,body,status,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
+        sms=c.execute('SELECT id,member_id,round_no,body,status,created_at FROM sms_logs WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         wins=c.execute('SELECT round_no,target_numbers,win_numbers,bonus,match_count,bonus_match,rank,prize,cost,profit,roi,created_at FROM winning_checks WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
         notes=c.execute('SELECT id,note,note_type,created_by_name,created_at FROM member_notes WHERE member_id=? ORDER BY id DESC LIMIT 50',(member_id,)).fetchall()
     rec_list=[]
@@ -2808,6 +2808,20 @@ def sms_logs(authorization: str|None = Header(default=None)):
     require_admin(authorization)
     with con() as c: rows=c.execute('SELECT * FROM sms_logs ORDER BY id DESC LIMIT 200').fetchall()
     return [dict(r) for r in rows]
+
+@app.delete('/api/sms/{sms_id}')
+def delete_sms_log(sms_id:int, request:Request, authorization: str|None = Header(default=None)):
+    admin=require_admin(authorization)
+    with con() as c:
+        row=c.execute('SELECT id, member_id, member_name, round_no FROM sms_logs WHERE id=?',(sms_id,)).fetchone()
+        if not row:
+            raise HTTPException(404,'문구 이력을 찾을 수 없습니다.')
+        if row['member_id']:
+            assert_member_access(c, admin, row['member_id'])
+        c.execute('DELETE FROM sms_logs WHERE id=?',(sms_id,))
+        c.commit()
+    log_action(admin,'DELETE_SMS_LOG',f"문구 이력 삭제 ID {sms_id} / {row['round_no'] or '-'}회 / {row['member_name'] or ''}",request)
+    return {'ok':True,'deleted_id':sms_id}
 
 @app.post('/api/win-check')
 def win_check(req:WinReq, request:Request, authorization: str|None = Header(default=None)):
